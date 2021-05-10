@@ -1,6 +1,7 @@
 
 module square_gen(
   input clk,
+  input Q,
   input start,
   input [7:0] din,
   input extend,
@@ -25,11 +26,22 @@ end
 
 assign dout = data[8] ? ~cnt[0] : ~cnt[1];
 
-always @(posedge clk or posedge start)
-  if (start) div <= 24'd0;
-  else if (en) { pulse, div } <= div + STP;
+reg q_r;
 
-always @(posedge pulse or posedge start) begin
+
+always @(posedge clk) begin
+  if (Q==1 && q_r ==0) begin
+    if (start) div <= 24'd0;
+	 else if (en) { pulse, div } <= div + STP;
+  end
+  q_r<=Q; 
+end
+
+
+reg pulse_r,start_r;
+
+always @(posedge clk) begin
+  if ((pulse_r ==0 && pulse==1) || (start_r ==0 && start==1)) begin
   if (start) begin
     en <= 1'b1;
     done <= 1'b0;
@@ -48,6 +60,10 @@ always @(posedge pulse or posedge start) begin
       end
     end
   end
+  end
+	pulse_r<=pulse;
+	start_r<=start;
+ 
 end
 
 endmodule

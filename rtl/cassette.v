@@ -2,6 +2,7 @@
 module cassette(
 
   input clk,
+  input Q,
   input play,
   input rewind,
 
@@ -43,9 +44,9 @@ parameter
   READ3     = 3'h5,
   READ4     = 3'h6;
 
-
+reg q_r;
 always @(posedge clk) begin
-
+  if (Q==1 && q_r ==0) begin
   ffplay <= play;
   ffrewind <= rewind;
 
@@ -93,11 +94,13 @@ always @(posedge clk) begin
 	 blk_addr   <= 25'd0;
     state      <= IDLE;
   end
-
+  end
+  q_r <= Q;
 end
 
 square_gen sq(
   .clk(clk),
+  .Q(Q),
   .start(sq_start),
   .din(ibyte),
   .extend(extend),

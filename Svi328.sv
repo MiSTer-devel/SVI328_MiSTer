@@ -25,12 +25,12 @@
 //  - Make Memory size select from OSD
 //  - Select PAL/NTSC
 //  - OSD Load Keyboard Map 
-//  - Tape Load Graphical wave
-//  - Tape Counter (bytes)
 
 // Done
 //  - Rewind on CAS load or Reset
 //  - LED_Disk on Tape Load
+//  - Tape Load Graphical wave (file only)
+//  - Tape Counter (progress bar)
 
 //Core : 
 //Z80 - 3,5555Mhz
@@ -52,7 +52,7 @@ module emu
 	input         RESET,
 
 	//Must be passed to hps_io module
-	inout  [45:0] HPS_BUS,
+	inout  [48:0] HPS_BUS,
 
 	//Base video clock. Usually equals to CLK_SYS.
 	output        CLK_VIDEO,
@@ -196,6 +196,7 @@ module emu
 	input         OSD_STATUS
 );
 
+
 //assign ADC_BUS = 'Z;
 assign USER_OUT = '1;
 assign {UART_RTS, UART_TXD, UART_DTR} = 0;
@@ -289,12 +290,10 @@ wire        forced_scandoubler;
 wire [21:0] gamma_bus;
 wire [10:0] PS2Keys;
  
-hps_io #(.STRLEN($size(CONF_STR)>>3)) hps_io
+hps_io #(.CONF_STR(CONF_STR)) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
-
-	.conf_str(CONF_STR),
 
 	.buttons(buttons),
 	.status(status),
@@ -495,12 +494,11 @@ always @(posedge CLK_VIDEO) begin
 	hs_o <= ~hsync;
 	if(~hs_o & ~hsync) vs_o <= ~vsync;
 end
+wire freeze_sync;
 
 video_mixer #(.LINE_LENGTH(290), .GAMMA(1)) video_mixer
 (
 	.*,
-	.freeze(1'b0),
-	.freeze_sync(),
 
 	.ce_pix(ce_5m3),
 

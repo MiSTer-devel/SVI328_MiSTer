@@ -108,7 +108,9 @@ entity vdp18_core is
     blank_n_o     : out std_logic;
     hblank_o      : out std_logic;
     vblank_o      : out std_logic;
-    comp_sync_n_o : out std_logic
+    comp_sync_n_o : out std_logic;
+    hcount_o      : out std_logic_vector(8 downto 0);
+    vcount_o      : out std_logic_vector(8 downto 0)
   );
 
 end vdp18_core;
@@ -178,6 +180,11 @@ architecture struct of vdp18_core is
   signal vblank_n          : boolean;
 
 begin
+
+
+
+  hcount_o <= std_logic_vector(num_pix_s);
+  vcount_o <= std_logic_vector(num_line_s);
 
   clk_en_10m7_s <= to_boolean_f(clk_en_10m7_i);
   rd_s          <= not to_boolean_f(csr_n_i);

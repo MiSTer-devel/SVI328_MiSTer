@@ -242,6 +242,8 @@ parameter CONF_STR = {
 	"-;",
 	"O3,Joysticks swap,No,Yes;",
 	"R0,Reset;",
+        "J,Button;",
+        "jn,A;",
 	"V,v",`BUILD_DATE
 };
 
@@ -441,12 +443,12 @@ cv_console console
 	.clk_en_5m3_i(ce_5m3),
 	.reset_n_i(~reset),
 
-   .svi_row_o(svi_row),
-   .svi_col_i(svi_col),	
+	.svi_row_o(svi_row),
+	.svi_col_i(svi_col),	
 	
 	.svi_tap_i(svi_audio_in),//status[15] ? tape_in : (CAS_status != 0 ? CAS_dout : 1'b0)),
 
-   .motor_o(motor),
+	.motor_o(motor),
 
 	.joy0_i(~{joya[4],joya[0],joya[1],joya[2],joya[3]}), //SVI {Fire,Right, Left, Down, Up} // HPS {Fire,Up, Down, Left, Right}
 	.joy1_i(~{joyb[4],joyb[0],joyb[1],joyb[2],joyb[3]}),
@@ -473,6 +475,8 @@ cv_console console
 	.vsync_n_o(vsync),
 	.hblank_o(hblank),
 	.vblank_o(vblank),
+	.hcount_o(HCount),
+	.vcount_o(VCount),
 
 	.audio_o(audio)
 );
@@ -504,9 +508,9 @@ video_mixer #(.LINE_LENGTH(290), .GAMMA(1)) video_mixer
 	.hq2x(scale==1),
 
 	.VGA_DE(vga_de),
-	.R(R),
-	.G(G),
-	.B(B),
+	.R(o_r),
+	.G(o_g),
+	.B(o_b),
 
 	// Positive pulses.
 	.HSync(hs_o),
@@ -551,6 +555,12 @@ assign CAS_ram_cs = 1'b1;
 assign CAS_ram_addr = (ioctl_download && ioctl_isCAS) ? ioctl_addr[17:0] : CAS_addr;
 assign CAS_ram_wren = ioctl_wr && ioctl_isCAS; 
 
+reg [24:0] tape_end;
+always @(posedge clk_sys) begin
+ if (ioctl_isCAS) tape_end <= ioctl_addr;
+end
+
+
 //17 128
 //18 256
 spram #(18) CAS_ram
@@ -581,6 +591,36 @@ cassette CASReader(
   .data(CAS_dout),
   .status(CAS_status)
 
+);
+
+wire [7:0] HCount;
+wire [7:0] VCount;
+wire [7:0] o_r;
+wire [7:0] o_g;
+wire [7:0] o_b;
+
+overlay  #( .RGB(24'hFFFFFF) ) coverlay
+(
+        .reset(reset),
+        .i_r(R),
+        .i_g(G),
+        .i_b(B),
+
+        .i_clk(clk_sys),
+        .i_pix(CE_PIXEL),
+
+        .hcnt(HCount),
+        .vcnt(VCount),
+
+        .o_r(o_r),
+        .o_g(o_g),
+        .o_b(o_b),
+
+        .pos(CAS_addr),
+        .max(tape_end),
+        .tape_data(CAS_di),
+
+        .ena(~motor)
 );
 
 endmodule

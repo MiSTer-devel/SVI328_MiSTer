@@ -618,7 +618,7 @@ overlay  #( .RGB(24'hFFFFFF) ) coverlay
         .max(tape_end),
         .tape_data(CAS_di),
 
-        .ena(~motor)
+        .ena(~motor & (CAS_addr < tape_end))
 );
 
 endmodule

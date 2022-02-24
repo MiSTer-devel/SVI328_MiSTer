@@ -3,7 +3,7 @@
 Core by fpganoob on misterfpga.org
 
 
-Place the rom in a boot.rom folder in the SVI328 folder
+Place the rom in a boot.rom file in the SVI328 folder
 
 ## Loading Games
 

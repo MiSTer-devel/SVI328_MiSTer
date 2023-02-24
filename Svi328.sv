@@ -209,6 +209,8 @@ assign LED_DISK  = {1'b0, svi_audio_in};
 assign LED_POWER  = 0;
 assign BUTTONS    = 0;
 assign VGA_SCALER = 0;
+assign VGA_DISABLE = 0;
+assign HDMI_FREEZE = 0;
 
 
 wire [1:0] ar = status[2:1];

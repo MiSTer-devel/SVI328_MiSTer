@@ -178,16 +178,16 @@ begin
 
         -- Vertical sync ------------------------------------------------------
         if    cnt_vert_q = last_line_s - 3 then
-		      vsync_n_o <= '0';
-		    elsif cnt_vert_q = last_line_s then
-		      vsync_n_o <= '1';
-		    end if;
+		    vsync_n_o <= '0';
+		  elsif cnt_vert_q = last_line_s then
+		    vsync_n_o <= '1';
+		  end if;
 		  
-		    if    cnt_vert_q = last_line_s - 6  then 
-		      vblank_q  <= true;
-		    elsif cnt_vert_q = first_line_s + 14 then
-		      vblank_q  <= false;
-		    end if;	
+		  if    cnt_vert_q = last_line_s - 6  then 
+		    vblank_q  <= true;
+		  elsif cnt_vert_q = first_line_s + 14 then
+		    vblank_q  <= false;
+		  end if;
 
       end if;
     end if;

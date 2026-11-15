@@ -36,3 +36,13 @@ c5_pin_model_dump.txt
 *~
 *.xml
 *.cdf
+
+# local only: test corpus and references (never commit, see software/INDEX.md)
+software/
+refs/
+# Verilator simulator build outputs
+verilator/obj_dir/
+verilator/obj_full/
+verilator/gen/
+verilator/obj_t80/
+verilator/obj_full_t80/

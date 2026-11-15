@@ -53,11 +53,9 @@ use work.vdp18_pack.hv_t;
 
 entity vdp18_hor_vert is
 
-  generic (
-    is_pal_g      : integer := 0
-  );
   port (
     clk_i         : in  std_logic;
+    pal_i         : in  std_logic;   -- 1 = PAL (313 lines), 0 = NTSC (262)
     clk_en_5m37_i : in  boolean;
     reset_i       : in  boolean;
     opmode_i      : in  opmode_t;
@@ -97,15 +95,9 @@ begin
   -----------------------------------------------------------------------------
   -- Prepare comparison signals for NTSC and PAL.
   --
-  is_ntsc: if is_pal_g /= 1 generate
-    first_line_s <= hv_first_line_ntsc_c;
-    last_line_s  <= hv_last_line_ntsc_c;
-  end generate;
-  --
-  is_pal: if is_pal_g = 1 generate
-    first_line_s <= hv_first_line_pal_c;
-    last_line_s  <= hv_last_line_pal_c;
-  end generate;
+  -- Chosen at run time (OSD Video standard, taken at reset).
+  first_line_s <= hv_first_line_pal_c when pal_i = '1' else hv_first_line_ntsc_c;
+  last_line_s  <= hv_last_line_pal_c  when pal_i = '1' else hv_last_line_ntsc_c;
   --
   -----------------------------------------------------------------------------
 

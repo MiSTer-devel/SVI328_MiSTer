@@ -1,0 +1,18 @@
+`verilator_config
+// state load/readback for the CPU test bench (cpu_tv80.h)
+public_flat_rw -module "tv80_core" -var "ACC"
+public_flat_rw -module "tv80_core" -var "F"
+public_flat_rw -module "tv80_core" -var "Ap"
+public_flat_rw -module "tv80_core" -var "Fp"
+public_flat_rw -module "tv80_core" -var "I"
+public_flat_rw -module "tv80_core" -var "R"
+public_flat_rw -module "tv80_core" -var "SP"
+public_flat_rw -module "tv80_core" -var "PC"
+public_flat_rw -module "tv80_core" -var "A"
+public_flat_rw -module "tv80_core" -var "TmpAddr"
+public_flat_rw -module "tv80_core" -var "Alternate"
+public_flat_rw -module "tv80_core" -var "IntE_FF1"
+public_flat_rw -module "tv80_core" -var "IntE_FF2"
+public_flat_rw -module "tv80_core" -var "IStatus"
+public_flat_rw -module "tv80_reg" -var "RegsH"
+public_flat_rw -module "tv80_reg" -var "RegsL"

@@ -85,7 +85,8 @@ entity vdp18_cpuio is
     reg_col1_o    : out std_logic_vector(0 to  3);
     reg_col0_o    : out std_logic_vector(0 to  3);
     irq_i         : in  boolean;
-    int_n_o       : out std_logic
+    int_n_o       : out std_logic;
+    busy_o        : out boolean     -- a CPU VRAM read-ahead or write-back is pending
   );
 
 end vdp18_cpuio;
@@ -230,6 +231,8 @@ begin
       end if;
     end if;
   end process seq;
+
+  busy_o <= rdvram_sched_q or rdvram_q or wrvram_sched_q or wrvram_q;
   --
   -----------------------------------------------------------------------------
 

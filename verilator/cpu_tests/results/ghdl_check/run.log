@@ -1,0 +1,9 @@
+mkdir -p results/ghdl_check
+./obj_t80/VT80pa pindump results/ghdl_check/tests.txt 200 vectors/sst_txt/*.txt > results/ghdl_check/netlist_trace.txt
+./ghdl/tb_t80 -gINFILE=results/ghdl_check/tests.txt --ieee-asserts=disable | \
+		grep -v '^simulation finished' > results/ghdl_check/ghdl_trace.txt
+cmp results/ghdl_check/netlist_trace.txt results/ghdl_check/ghdl_trace.txt && \
+		echo "GHDL simulation and netlist identical on $(grep -c '^T ' results/ghdl_check/netlist_trace.txt) tests" | \
+		tee results/ghdl_check/result.txt
+GHDL simulation and netlist identical on 320800 tests
+rm -f results/ghdl_check/*_trace.txt

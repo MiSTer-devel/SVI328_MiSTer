@@ -64,20 +64,24 @@ use IEEE.STD_LOGIC_UNSIGNED.ALL;
 entity cv_console is
 
   generic (
-    is_pal_g        : integer := 1;
     compat_rgb_g    : integer := 0
   );
   port (
     -- Global Interface -------------------------------------------------------
     clk_i           : in  std_logic;
+    pal_i           : in  std_logic;   -- video standard: 1 = PAL, 0 = NTSC
     clk_en_10m7_i   : in  std_logic;
 	 clk_en_5m3_i   : in  std_logic;
+    -- Z80 clock enables from the top level (3.555 MHz, 4x while turbo)
+    clk_en_cpu_p_i  : in  std_logic;
+    clk_en_cpu_n_i  : in  std_logic;
     reset_n_i       : in  std_logic;
 
     svi_row_o       : out std_logic_vector(3 downto 0);
     svi_col_i       : in  std_logic_vector(7 downto 0);	 
 
     svi_tap_i	    : in  std_logic;	 
+    tape_ready_n_i  : in  std_logic;   -- PPI A6: 0 = a tape is in the deck
     motor_o	    : out std_logic;	 
 	 
     por_n_o         : out std_logic;
@@ -93,6 +97,13 @@ entity cv_console is
     cpu_ram_d_o     : out std_logic_vector( 7 downto 0);
     -- RAM Mapper Reg ---------------------------------------------------------
     ay_port_b       : out std_logic_vector( 7 downto 0);
+    -- Expansion cards (SV-801 disk, SV-806 80-column) ------------------------
+    cpu_iorq_n_o    : out std_logic;
+    cpu_m1_n_o      : out std_logic;
+    ext_d_en_i      : in  std_logic;   -- a card drives the data bus (read)
+    ext_d_i         : in  std_logic_vector( 7 downto 0);
+    ext_wait_n_i    : in  std_logic;   -- a card holds the Z80 (SV-806 RAM)
+    turbo_i         : in  std_logic;   -- the Z80 runs 4x (tape turbo): pace VDP accesses
     -- Video RAM Interface ----------------------------------------------------
     vram_a_o        : out std_logic_vector(13 downto 0);
     vram_we_o       : out std_logic;
@@ -203,6 +214,11 @@ architecture struct of cv_console is
   signal mreq_n_s         : std_logic;
   signal rfsh_n_s         : std_logic;
   signal a_s              : std_logic_vector(15 downto 0);
+  signal d_mux_s          : std_logic_vector( 7 downto 0);
+  signal cpu_wait_n_s     : std_logic;
+  signal vdp_busy_s, vdp_acc_s, vdp_hold_s, vdp_wait_n_s : std_logic;
+  signal vdp_pass_q, vdp_seen_q : std_logic;
+  signal vdp_csr_n_s, vdp_csw_n_s : std_logic;
   signal d_to_cpu_s,
          d_from_cpu_s     : std_logic_vector( 7 downto 0);
 
@@ -228,6 +244,12 @@ architecture struct of cv_console is
   signal ay_addr_we_n_s   : std_logic;
   signal ay_data_we_n_s   : std_logic;
   signal ay_data_rd_n_s   : std_logic;
+  -- PSG port B: the latch (R15) and the direction bit (R7 bit 7). The bank
+  -- lines see the latch only while port B is an output; as an input (after
+  -- reset, until the BIOS sets R7) the AY's pull-ups make them read FF.
+  signal ay_latch_b_s     : std_logic_vector( 7 downto 0);
+  signal ay_reg_s         : std_logic_vector( 3 downto 0);
+  signal ay_b_out_s       : std_logic;
   signal u8255_cs_n_s     : std_logic;  
   
 -- 8255 data Signal  
@@ -274,14 +296,11 @@ begin
   -----------------------------------------------------------------------------
   -- Clock generation
   -----------------------------------------------------------------------------
-  clock_b : work.cv_clock
-    port map (
-      clk_i         => clk_i,
-      clk_en_10m7_i => clk_en_10m7_i,
-      reset_n_i     => reset_n_s,
-      clk_en_3m58_p_o => clk_en_3m58_p_s,
-      clk_en_3m58_n_o => clk_en_3m58_n_s
-    );
+  -- Z80: enables come from the top level (Svi328.sv), so turbo can change
+  -- the rate. They were cv_clock(clk_en_10m7) = 3.555 MHz, which is still the
+  -- normal rate.
+  clk_en_3m58_p_s <= clk_en_cpu_p_i;
+  clk_en_3m58_n_s <= clk_en_cpu_n_i;
 
   clock_b2 : work.cv_clock
     port map (
@@ -304,7 +323,7 @@ begin
       CLK        => clk_i,
       CEN_p      => clk_en_3m58_p_s,
       CEN_n      => clk_en_3m58_n_s,
-      WAIT_n     => wait_n_s,
+      WAIT_n     => cpu_wait_n_s,
       INT_n      => int_n_s,
       NMI_n      => nmi_n_s,
       BUSRQ_n    => vdd_s,
@@ -339,8 +358,8 @@ inst_psg : jt49_bus
 		 C => open,
 		 IOA_In => joy1_i(3 downto 0) & joy0_i(3 downto 0), 
 		 IOA_out     => open,
-		 IOB_Out => ay_port_b,
-		 IOB_In => (others => '0')
+		 IOB_Out => ay_latch_b_s,
+		 IOB_In => (others => '1')      -- pull-ups
  );
 
 
@@ -391,7 +410,7 @@ inst_psg : jt49_bus
     csn       => u8255_cs_n_s,
 
     -- External pins to peripherals
-	 porta_din => svi_tap_i & '0' & joy1_i(4) & joy0_i(4) &"1111",
+	 porta_din => svi_tap_i & tape_ready_n_i & joy1_i(4) & joy0_i(4) &"1111",
     portb_din => svi_col_i,
 	 portc_din => (others => '0'),
 
@@ -433,19 +452,20 @@ inst_psg : jt49_bus
   -----------------------------------------------------------------------------
   vdp18_b : work.vdp18_core
     generic map (
-      is_pal_g      => is_pal_g,
       compat_rgb_g  => compat_rgb_g
     )
     port map (
       clk_i         => clk_i,
+      pal_i         => pal_i,
       clk_en_10m7_i => clk_en_10m7_i,
       reset_n_i     => reset_n_s,
-      csr_n_i       => vdp_r_n_s,
-      csw_n_i       => vdp_w_n_s,
+      csr_n_i       => vdp_csr_n_s,
+      csw_n_i       => vdp_csw_n_s,
       mode_i        => a_s(0),
       int_n_o       => vdp_int_n_s,
       cd_i          => d_from_cpu_s,
       cd_o          => d_from_vdp_s,
+      cpu_busy_o    => vdp_busy_s,
       vram_we_o     => vram_we_o,
       vram_a_o      => vram_a_o,
       vram_d_o      => vram_d_o,
@@ -511,10 +531,67 @@ inst_psg : jt49_bus
       ay_d_i          => ay_d_s,
 		joyfire         => joy1_i(4) & joy0_i(4),		
 		d_from_8255 	 => d_from_8255,
-      d_o             => d_to_cpu_s
+      d_o             => d_mux_s
     );
 
+  -- A card answering a read drives the bus (the others idle at FF).
+  d_to_cpu_s   <= ext_d_i when ext_d_en_i = '1' else d_mux_s;
+  cpu_wait_n_s <= wait_n_s and ext_wait_n_i and vdp_wait_n_s;
 
+  -----------------------------------------------------------------------------
+  -- VDP access pacing under tape turbo
+  --
+  -- The TMS9918A has a one-byte buffer: a CPU VRAM access waits for the next
+  -- access slot, and a second access before that overwrites the first (real
+  -- software is written for a 3.58 MHz Z80). With the Z80 at 4x a game that
+  -- draws while the tape runs (Kung Fu Master's menu) lost VRAM writes. While
+  -- turbo is on, a VDP access is passed to the VDP only when it is not busy,
+  -- and the Z80 waits until the VDP has seen it. At normal speed the strobes
+  -- pass straight through and the Z80 never waits here.
+  -----------------------------------------------------------------------------
+  vdp_acc_s  <= not (vdp_r_n_s and vdp_w_n_s);
+  vdp_hold_s <= turbo_i and not vdp_pass_q;
+  vdp_csr_n_s <= vdp_r_n_s or vdp_hold_s;
+  vdp_csw_n_s <= vdp_w_n_s or vdp_hold_s;
+  vdp_wait_n_s <= not (turbo_i and vdp_acc_s and not vdp_seen_q);
+
+  vdp_pace: process (clk_i)
+  begin
+    if rising_edge(clk_i) then
+      if reset_n_s = '0' or vdp_acc_s = '0' then
+        vdp_pass_q <= '0';
+        vdp_seen_q <= '0';
+      else
+        if vdp_busy_s = '0' then
+          vdp_pass_q <= '1';
+        end if;
+        if vdp_pass_q = '1' and clk_en_10m7_i = '1' then
+          vdp_seen_q <= '1';
+        end if;
+      end if;
+    end if;
+  end process vdp_pace;
+  cpu_iorq_n_o <= iorq_n_s;
+  cpu_m1_n_o   <= m1_n_s;
+
+
+
+  psg_portb : process (clk_i, reset_n_s)
+  begin
+    if reset_n_s = '0' then
+      ay_reg_s   <= (others => '0');
+      ay_b_out_s <= '0';
+    elsif rising_edge(clk_i) then
+      if ay_addr_we_n_s = '0' then
+        ay_reg_s <= d_from_cpu_s(3 downto 0);
+      end if;
+      if ay_data_we_n_s = '0' and ay_reg_s = "0111" then
+        ay_b_out_s <= d_from_cpu_s(7);
+      end if;
+    end if;
+  end process psg_portb;
+
+  ay_port_b <= ay_latch_b_s when ay_b_out_s = '1' else (others => '1');
 
   svi_row : process (clk_i, reset_n_s, m1_n_s)
   begin

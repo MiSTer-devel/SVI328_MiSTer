@@ -36,6 +36,10 @@ set_global_assignment -name VHDL_FILE rtl/keyboard_svi.vhd
 set_global_assignment -name VHDL_FILE rtl/ps2kbd_pkg.vhd
 set_global_assignment -name VHDL_FILE rtl/74ls74.vhd
 
-set_global_assignment -name QIP_FILE rtl/cassetteoverlay/cassetteoverlay.qip
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tape_overlay.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sv801/sv801.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sv801/wd1793.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sv806/sv806.sv
+set_global_assignment -name VERILOG_FILE rtl/sv806/um6845r.v
 
 set_global_assignment -name SYSTEMVERILOG_FILE Svi328.sv

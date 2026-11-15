@@ -1,0 +1,9 @@
+`verilator_config
+// signals the harness reads directly
+public_flat_rd -module "vdp18_cpuio" -var "ctrl_reg_q"
+public_flat_rd -module "tv80_core" -var "PC"
+lint_off -rule WIDTH
+lint_off -rule UNUSED
+lint_off -rule CASEINCOMPLETE
+lint_off -rule PINMISSING
+lint_off -rule UNOPTFLAT

@@ -1,0 +1,699 @@
+diff -ru tv80/tv80_alu.v tv80/tv80_alu.v
+--- tv80/tv80_alu.v	2026-11-15 07:31:03
++++ tv80/tv80_alu.v	2026-11-15 07:31:17
+@@ -274,7 +274,7 @@
+ 	      end
+             
+ 	    F_Out[Flag_S] = DAA_Q[7];
+-	    F_Out[Flag_P] = ~ (^DAA_Q);
++	    F_Out[Flag_P] = ~ (^DAA_Q[7:0]);  // even parity of the 8-bit result (UM0080 DAA: "P/V is set if parity of result is even")
+           end // case: 4'b1100
+         
+ 	4'b1101, 4'b1110 :
+diff -ru tv80/tv80_core.v tv80/tv80_core.v
+--- tv80/tv80_core.v	2026-11-15 07:31:03
++++ tv80/tv80_core.v	2026-11-15 07:31:17
+@@ -162,6 +162,9 @@
+   reg [7:0]     DI_Reg;
+   reg           T_Res;
+   reg [1:0]     XY_State;
++  wire          XYbit_undoc;
++  wire          Save_TmpL;
++  reg           Save_TmpL_r;
+   reg [2:0]     Pre_XY_F_M;
+   reg           NextIs_XY_Fetch;
+   reg           XY_Ind;
+@@ -177,6 +180,8 @@
+   reg [7:0]     BusA;
+   wire [7:0]    ALU_Q;
+   wire [7:0]    F_Out;
++  wire [8:0]    ioq = {1'b0, DI_Reg} + {1'b0, ID16[7:0]};
++  wire [7:0]    CP_n = ALU_Q - {7'b0, F_Out[Flag_H]};
+ 
+   // Registered micro code outputs
+   reg [4:0]     Read_To_Reg_r;
+@@ -229,6 +234,7 @@
+   wire           I_BTR;
+   wire           I_RLD;
+   wire           I_RRD;
++  reg            I_RXDD;
+   wire           I_INRC;
+   wire           SetDI;
+   wire           SetEI;
+@@ -294,7 +300,10 @@
+      .IMode                (IMode),
+      .Halt                 (Halt),
+      .NoRead               (no_read),
+-     .Write                (write)
++     .Write                (write),
++     .XYbit_undoc          (XYbit_undoc),
++     .Save_TmpL            (Save_TmpL),
++     .XY_State             (XY_State)
+      );
+ 
+   tv80_alu #(Mode, Flag_C, Flag_N, Flag_P, Flag_X, Flag_H, Flag_Y, Flag_Z, Flag_S) i_alu
+@@ -369,7 +378,7 @@
+     end // always @ (...
+   
+           
+-  always @(/*AUTOSENSE*/ALU_Q or BusAck or BusB or DI_Reg
++  always @(/*AUTOSENSE*/ALU_Q or BusAck or BusB or DI_Reg or Save_TmpL_r or TmpAddr
+ 	   or ExchangeRp or IR or Save_ALU_r or Set_Addr_To or XY_Ind
+ 	   or XY_State or cen or last_tstate or mcycle)
+     begin
+@@ -389,6 +398,8 @@
+ 
+       if (ExchangeRp)
+         Save_Mux = BusB;
++      else if (Save_TmpL_r)
++        Save_Mux = TmpAddr[7:0];
+       else if (!Save_ALU_r)
+         Save_Mux = DI_Reg;
+       else
+@@ -402,6 +413,7 @@
+           PC <= `TV80DELAY 0;  // Program Counter
+           A <= `TV80DELAY 0;
+           TmpAddr <= `TV80DELAY 0;
++          I_RXDD <= `TV80DELAY 1'b0;
+           IR <= `TV80DELAY 8'b00000000;
+           // ir_changed <= 1'b1;
+           ISet <= `TV80DELAY 2'b00;
+@@ -422,6 +434,7 @@
+           Alternate <= `TV80DELAY 1'b0;
+ 
+           Read_To_Reg_r <= `TV80DELAY 5'b00000;
++          Save_TmpL_r <= `TV80DELAY 1'b0;
+           Arith16_r <= `TV80DELAY 1'b0;
+           BTR_r <= `TV80DELAY 1'b0;
+           Z16_r <= `TV80DELAY 1'b0;
+@@ -439,6 +452,7 @@
+               ALU_Op_r <= `TV80DELAY 4'b0000;
+               Save_ALU_r <= `TV80DELAY 1'b0;
+               Read_To_Reg_r <= `TV80DELAY 5'b00000;
++              Save_TmpL_r <= `TV80DELAY 1'b0;
+ 
+               mcycles <= `TV80DELAY mcycles_d;
+ 
+@@ -770,20 +784,30 @@
+                             F[Flag_P] <= `TV80DELAY IntE_FF2;
+ 			    F[Flag_Z] <= (I == 0);
+ 			    F[Flag_S] <= I[7];
++			    F[Flag_Y] <= I[5];  // undocumented: bits 5/3 copy the result
++			    F[Flag_X] <= I[3];
+ 			    F[Flag_H] <= 0;
+ 			    F[Flag_N] <= 0; 
+                           end
+                         
+                         2'b01 :
+                           begin
++                            // LD A,R: S and Z come from the value loaded (UM0080 LD A,R:
++                            // "S is set if, R-Register is negative", "Z is set if the R Register is 0")
+                             `ifdef TV80_REFRESH
+                             ACC <= `TV80DELAY R;
++                            F[Flag_Z] <= (R == 0);
++                            F[Flag_S] <= R[7];
++                            F[Flag_Y] <= R[5];
++                            F[Flag_X] <= R[3];
+                             `else
+                             ACC <= `TV80DELAY 0;
++                            F[Flag_Z] <= 1'b1;
++                            F[Flag_S] <= 1'b0;
++                            F[Flag_Y] <= 1'b0;
++                            F[Flag_X] <= 1'b0;
+                             `endif
+                             F[Flag_P] <= `TV80DELAY IntE_FF2;
+-			    F[Flag_Z] <= (I == 0);
+-			    F[Flag_S] <= I[7];
+ 			    F[Flag_H] <= 0;
+ 			    F[Flag_N] <= 0; 
+                           end
+@@ -802,6 +826,16 @@
+                 end // if (tstate == 3 )
+               
+ 
++              // INI/IND/OUTI/OUTD and repeats: k = data + (C+-1) for IN, data + L for OUT;
++              // N = data bit 7, H = C = carry of k, P = parity((k & 7) ^ B) (Young 4.3; as T80)
++              if ((tstate[2] && I_BTR && IR[0]) || (tstate[1] && I_BTR && !IR[0]))
++                begin
++                  F[Flag_N] <= `TV80DELAY DI_Reg[7];
++                  F[Flag_C] <= `TV80DELAY ioq[8];
++                  F[Flag_H] <= `TV80DELAY ioq[8];
++                  F[Flag_P] <= `TV80DELAY ~ (^((ioq[7:0] & 8'h07) ^ BusA));
++                end
++
+               if ((I_DJNZ == 1'b0 && Save_ALU_r == 1'b1) || ALU_Op_r == 4'b1001 ) 
+                 begin
+                   if (Mode == 3 ) 
+@@ -822,6 +856,13 @@
+                           F[Flag_C] <= `TV80DELAY F_Out[0];
+                         end
+                     end
++                  // BIT b,(IX+d) / (IY+d): flags 5/3 are bits 13/11 of IX+d (Young 4.1;
++                  // IX+d is held in TmpAddr)
++                  if (ALU_Op_r == 4'b1001 && XY_Ind == 1'b1 && Mode != 3)
++                    begin
++                      F[Flag_Y] <= `TV80DELAY TmpAddr[13];
++                      F[Flag_X] <= `TV80DELAY TmpAddr[11];
++                    end
+                 end // if ((I_DJNZ == 1'b0 && Save_ALU_r == 1'b1) || ALU_Op_r == 4'b1001 )
+               
+               if (T_Res == 1'b1 && I_INRC == 1'b1 ) 
+@@ -837,13 +878,18 @@
+                       F[Flag_Z] <= `TV80DELAY 1'b0;
+                     end
+                   F[Flag_S] <= `TV80DELAY DI_Reg[7];
++                  F[Flag_Y] <= `TV80DELAY DI_Reg[5];  // undocumented: copies of the byte read (as T80)
++                  F[Flag_X] <= `TV80DELAY DI_Reg[3];
+                   F[Flag_P] <= `TV80DELAY ~ (^DI_Reg[7:0]);
+                 end // if (T_Res == 1'b1 && I_INRC == 1'b1 )
+               
+ 
+               if (tstate[1] && Auto_Wait_t1 == 1'b0 ) 
+                 begin
+-                  dout <= `TV80DELAY BusB;
++                  // Keep dout from M3 for RLD/RRD (as Sorgelig's T80)
++                  I_RXDD <= `TV80DELAY I_RLD | I_RRD;
++                  if (!I_RXDD)
++                    dout <= `TV80DELAY BusB;
+                   if (I_RLD == 1'b1 ) 
+                     begin
+                       dout[3:0] <= `TV80DELAY BusA[3:0];
+@@ -860,6 +906,7 @@
+                 begin
+                   Read_To_Reg_r[3:0] <= `TV80DELAY Set_BusA_To;
+                   Read_To_Reg_r[4] <= `TV80DELAY Read_To_Reg;
++                  Save_TmpL_r <= `TV80DELAY Save_TmpL;
+                   if (Read_To_Acc == 1'b1 ) 
+                     begin
+                       Read_To_Reg_r[3:0] <= `TV80DELAY 4'b0111;
+@@ -874,6 +921,12 @@
+                   F[Flag_H] <= `TV80DELAY 1'b0;
+                   F[Flag_N] <= `TV80DELAY 1'b0;
+                 end
++              if (tstate[1] && I_BC == 1'b1 )
++                begin
++                  // CPI/CPD/CPIR/CPDR: n = A - (HL) - H; flags 5/3 are n bits 1/3 (Young 4.2; as T80)
++                  F[Flag_X] <= `TV80DELAY CP_n[3];
++                  F[Flag_Y] <= `TV80DELAY CP_n[1];
++                end
+               if (I_BC == 1'b1 || I_BT == 1'b1 ) 
+                 begin
+                   F[Flag_P] <= `TV80DELAY IncDecZ;
+@@ -895,6 +948,8 @@
+                       F <= `TV80DELAY Save_Mux;
+                     default : ;
+                   endcase
++                  if (XYbit_undoc)
++                    dout <= `TV80DELAY ALU_Q;  // DDCB/FDCB register-copy: also write the result back to (IX+d)
+                 end // if ((tstate == 1 && Save_ALU_r == 1'b0 && Auto_Wait_t1 == 1'b0) ||...              
+             end // if (ClkEn == 1'b1 )         
+         end // else: !if(reset_n == 1'b0 )
+@@ -961,10 +1016,13 @@
+   always @(/*AUTOSENSE*/Alternate or ExchangeDH or IncDec_16
+ 	   or RegAddrA_r or RegAddrB_r or XY_State or mcycle or tstate)
+     begin
+-      if ((tstate[2] || (tstate[3] && mcycle[0] && IncDec_16[2] == 1'b1)) && XY_State == 2'b00)
+-        RegAddrA = { Alternate, IncDec_16[1:0] };
+-      else if ((tstate[2] || (tstate[3] && mcycle[0] && IncDec_16[2] == 1'b1)) && IncDec_16[1:0] == 2'b10)
++      // 16-bit INC/DEC: a DD/FD prefix only redirects HL to IX/IY. INC/DEC BC/DE under
++      // a prefix still address BC/DE (previously DD 13 / DD 1B fell through to
++      // RegAddrA_r and changed BC).
++      if ((tstate[2] || (tstate[3] && mcycle[0] && IncDec_16[2] == 1'b1)) && XY_State != 2'b00 && IncDec_16[1:0] == 2'b10)
+         RegAddrA = { XY_State[1], 2'b11 };
++      else if (tstate[2] || (tstate[3] && mcycle[0] && IncDec_16[2] == 1'b1))
++        RegAddrA = { Alternate, IncDec_16[1:0] };
+       else if (ExchangeDH == 1'b1 && tstate[3])
+         RegAddrA = { Alternate, 2'b10 };
+       else if (ExchangeDH == 1'b1 && tstate[4])
+@@ -1131,6 +1189,12 @@
+             default :
+               BusA <= `TV80DELAY  8'h0;
+           endcase
++          if (XYbit_undoc)
++            begin
++              // DDCB/FDCB register-copy forms operate on (IX+d), not on r
++              BusA <= `TV80DELAY DI_Reg;
++              BusB <= `TV80DELAY DI_Reg;
++            end
+         end
+     end
+ 
+@@ -1406,7 +1470,9 @@
+   always @(/*AUTOSENSE*/IntCycle or NMICycle or mcycle)
+     begin
+       Auto_Wait = 1'b0;
+-      if (IntCycle == 1'b1 || NMICycle == 1'b1 ) 
++      // two automatic waits only in the INT acknowledge (IORQ M1); the NMI acknowledge
++      // is an ordinary 5 T opcode fetch (UM0080 NMI timing; as T80)
++      if (IntCycle == 1'b1 ) 
+         begin
+           if (mcycle[0] ) 
+             begin
+diff -ru tv80/tv80_mcode.v tv80/tv80_mcode.v
+--- tv80/tv80_mcode.v	2026-11-15 07:31:03
++++ tv80/tv80_mcode.v	2026-11-15 07:31:17
+@@ -33,8 +33,9 @@
+   LDW, LDSPHL, Special_LD, ExchangeDH, ExchangeRp, ExchangeAF, 
+   ExchangeRS, I_DJNZ, I_CPL, I_CCF, I_SCF, I_RETN, I_BT, I_BC, I_BTR, 
+   I_RLD, I_RRD, I_INRC, SetDI, SetEI, IMode, Halt, NoRead, Write, 
++  XYbit_undoc, Save_TmpL,
+   // Inputs
+-  IR, ISet, MCycle, F, NMICycle, IntCycle
++  IR, ISet, MCycle, F, NMICycle, IntCycle, XY_State
+   );
+   
+   parameter             Mode   = 0;
+@@ -48,6 +49,9 @@
+   parameter             Flag_S = 7;
+ 
+   input [7:0]           IR;
++  input [1:0]           XY_State;  // DD/FD prefix active (DDCB/FDCB register-copy forms)
++  output                XYbit_undoc;  // DDCB/FDCB with op&7 != 6: result to (IX+d) and to the register
++  output                Save_TmpL;    // register write takes TmpAddr[7:0] (EX (SP),HL)
+   input [1:0]           ISet                    ;
+   input [6:0]           MCycle                  ;
+   input [7:0]           F                       ;
+@@ -147,6 +151,8 @@
+   reg                   Halt                    ;
+   reg                   NoRead                  ;
+   reg                   Write   ;                
++  reg                   XYbit_undoc;
++  reg                   Save_TmpL;
+ 
+   parameter             aNone   = 3'b111;
+   parameter             aBC     = 3'b000;
+@@ -202,7 +208,7 @@
+   reg [1:0] DPAIR;
+   
+   always @ (/*AUTOSENSE*/F or IR or ISet or IntCycle or MCycle
+-            or NMICycle)
++            or NMICycle or XY_State)
+     begin
+       DDD = IR[5:3];
+       SSS = IR[2:0];
+@@ -261,6 +267,8 @@
+       Halt = 1'b0;
+       NoRead = 1'b0;
+       Write = 1'b0;
++      XYbit_undoc = 1'b0;
++      Save_TmpL = 1'b0;
+       
+       case (ISet)
+         2'b00  :
+@@ -801,37 +809,41 @@
+                 begin
+                   if (Mode != 3 ) 
+                     begin
+-                      // EX (SP),HL
++                      // EX (SP),HL: MR (SP), MR (SP+1), MW (SP+1)=H, MW (SP)=L, 4/3/4/3/5 T
++                      // (UM0080 EX (SP),HL; bus order as SingleStepTests). (SP) is held in
++                      // TmpAddr[7:0] until L has been written out.
+                       MCycles = 3'b101;
+                       case (1'b1) // MCycle
+                         MCycle[0] :
+                           Set_Addr_To = aSP;
+                         MCycle[1] :
+                           begin
+-                            Read_To_Reg = 1'b1;
+-                            Set_BusA_To = 4'b0101;
+-                            Set_BusB_To = 4'b0101;
++                            LDZ = 1'b1;              // TmpAddr[7:0] <= (SP)
++                            IncDec_16 = 4'b0111;     // SP+1
+                             Set_Addr_To = aSP;
+                           end
+                         MCycle[2] :
+                           begin
+-                            IncDec_16 = 4'b0111;
++                            Read_To_Reg = 1'b1;      // H <= (SP+1); BusB keeps the old H
++                            Set_BusA_To = 4'b0100;
++                            Set_BusB_To = 4'b0100;
+                             Set_Addr_To = aSP;
+                             TStates = 3'b100;
+-                            Write = 1'b1;
+                           end
+                         MCycle[3] :
+                           begin
+-                            Read_To_Reg = 1'b1;
+-                            Set_BusA_To = 4'b0100;
+-                            Set_BusB_To = 4'b0100;
++                            Write = 1'b1;            // (SP+1) <= old H
++                            Set_BusB_To = 4'b0101;   // old L for the next write
++                            IncDec_16 = 4'b1111;     // SP back
+                             Set_Addr_To = aSP;
+                           end
+                         MCycle[4] :
+                           begin
+-                            IncDec_16 = 4'b1111;
++                            Write = 1'b1;            // (SP) <= old L
+                             TStates = 3'b101;
+-                            Write = 1'b1;
++                            Read_To_Reg = 1'b1;      // L <= TmpAddr[7:0]
++                            Set_BusA_To = 4'b0101;
++                            Save_TmpL = 1'b1;
+                           end
+                         
+                         default :;
+@@ -1021,8 +1033,7 @@
+                         
+                         MCycle[1] :
+                           begin
+-                            TStates = 3'b100;
+-                            Write = 1'b1;
++                            Write = 1'b1;   // stack writes are 3 T (UM0080 NMI/INT timing; as T80)
+                             IncDec_16 = 4'b1111;
+                             Set_Addr_To = aSP;
+                             Set_BusB_To = 4'b1100;
+@@ -1030,7 +1041,6 @@
+                         
+                         MCycle[2] :
+                           begin
+-                            TStates = 3'b100;
+                             Write = 1'b1;
+                           end
+                         
+@@ -1054,8 +1064,7 @@
+                         
+                         MCycle[1] :
+                           begin
+-                            TStates = 3'b100;
+-                            Write = 1'b1;
++                            Write = 1'b1;   // stack writes are 3 T (UM0080 NMI/INT timing; as T80)
+                             IncDec_16 = 4'b1111;
+                             Set_Addr_To = aSP;
+                             Set_BusB_To = 4'b1100;
+@@ -1063,7 +1072,6 @@
+                         
+                         MCycle[2] :
+                           begin
+-                            TStates = 3'b100;
+                             Write = 1'b1;
+                           end
+                         
+@@ -1791,10 +1799,31 @@
+                   // SRA r
+                   // SRL r
+                   // SLL r (Undocumented) / SWAP r
+-                  if (MCycle[0] ) begin
+-                    ALU_Op = 4'b1000;
+-                    Read_To_Reg = 1'b1;
+-                    Save_ALU = 1'b1;
++                  if (XY_State == 2'b00) begin
++                    if (MCycle[0] ) begin
++                      ALU_Op = 4'b1000;
++                      Read_To_Reg = 1'b1;
++                      Save_ALU = 1'b1;
++                    end
++                  end else begin
++                    // rot (IX+d),r (undocumented, as T80): result written to (IX+d) and r
++                      MCycles = 3'b011;
++                      XYbit_undoc = 1'b1;
++                      case (1'b1) // MCycle
++                        MCycle[0], MCycle[6] :
++                          Set_Addr_To = aXY;
++                        MCycle[1] :
++                          begin
++                            ALU_Op = 4'b1000;
++                            Read_To_Reg = 1'b1;
++                            Save_ALU = 1'b1;
++                            Set_Addr_To = aXY;
++                            TStates = 3'b100;
++                          end
++                        MCycle[2] :
++                          Write = 1'b1;
++                        default :;
++                      endcase
+                   end
+                 end // case: 8'b00000000,8'b00000001,8'b00000010,8'b00000011,8'b00000100,8'b00000101,8'b00000111,...
+               
+@@ -1837,11 +1866,27 @@
+                   8'b01111000,8'b01111001,8'b01111010,8'b01111011,8'b01111100,8'b01111101,8'b01111111 :
+                     begin
+                       // BIT b,r
++                      if (XY_State == 2'b00) begin
+                       if (MCycle[0] )
+                         begin
+                           Set_BusB_To[2:0] = IR[2:0];
+                           ALU_Op = 4'b1001;
+                         end
++                      end else begin
++                      // BIT b,(IX+d) (undocumented encodings, as T80)
++                          MCycles = 3'b010;
++                          XYbit_undoc = 1'b1;
++                          case (1'b1) // MCycle
++                            MCycle[0], MCycle[6] :
++                              Set_Addr_To = aXY;
++                            MCycle[1] :
++                              begin
++                                ALU_Op = 4'b1001;
++                                TStates = 3'b100;
++                              end
++                            default :;
++                          endcase
++                      end
+                     end // case: 8'b01000000,8'b01000001,8'b01000010,8'b01000011,8'b01000100,8'b01000101,8'b01000111,...
+               
+               8'b01000110,8'b01001110,8'b01010110,8'b01011110,8'b01100110,8'b01101110,8'b01110110,8'b01111110  :
+@@ -1871,12 +1916,33 @@
+                   8'b11111000,8'b11111001,8'b11111010,8'b11111011,8'b11111100,8'b11111101,8'b11111111 :
+                     begin
+                       // SET b,r
++                      if (XY_State == 2'b00) begin
+                       if (MCycle[0] ) 
+                         begin
+                           ALU_Op = 4'b1010;
+                           Read_To_Reg = 1'b1;
+                           Save_ALU = 1'b1;
+                         end
++                      end else begin
++                      // SET b,(IX+d),r (undocumented, as T80): result written to (IX+d) and r
++                          MCycles = 3'b011;
++                          XYbit_undoc = 1'b1;
++                          case (1'b1) // MCycle
++                            MCycle[0], MCycle[6] :
++                              Set_Addr_To = aXY;
++                            MCycle[1] :
++                              begin
++                                ALU_Op = 4'b1010;
++                                Read_To_Reg = 1'b1;
++                                Save_ALU = 1'b1;
++                                Set_Addr_To = aXY;
++                                TStates = 3'b100;
++                              end
++                            MCycle[2] :
++                              Write = 1'b1;
++                            default :;
++                          endcase
++                      end
+                     end // case: 8'b11000000,8'b11000001,8'b11000010,8'b11000011,8'b11000100,8'b11000101,8'b11000111,...
+               
+               8'b11000110,8'b11001110,8'b11010110,8'b11011110,8'b11100110,8'b11101110,8'b11110110,8'b11111110  :
+@@ -1910,12 +1976,33 @@
+                   8'b10111000,8'b10111001,8'b10111010,8'b10111011,8'b10111100,8'b10111101,8'b10111111 :
+                     begin
+                       // RES b,r
++                      if (XY_State == 2'b00) begin
+                       if (MCycle[0] ) 
+                         begin
+                           ALU_Op = 4'b1011;
+                           Read_To_Reg = 1'b1;
+                           Save_ALU = 1'b1;
+                         end
++                      end else begin
++                      // RES b,(IX+d),r (undocumented, as T80): result written to (IX+d) and r
++                          MCycles = 3'b011;
++                          XYbit_undoc = 1'b1;
++                          case (1'b1) // MCycle
++                            MCycle[0], MCycle[6] :
++                              Set_Addr_To = aXY;
++                            MCycle[1] :
++                              begin
++                                ALU_Op = 4'b1011;
++                                Read_To_Reg = 1'b1;
++                                Save_ALU = 1'b1;
++                                Set_Addr_To = aXY;
++                                TStates = 3'b100;
++                              end
++                            MCycle[2] :
++                              Write = 1'b1;
++                            default :;
++                          endcase
++                      end
+                     end // case: 8'b10000000,8'b10000001,8'b10000010,8'b10000011,8'b10000100,8'b10000101,8'b10000111,...
+               
+               8'b10000110,8'b10001110,8'b10010110,8'b10011110,8'b10100110,8'b10101110,8'b10110110,8'b10111110  :
+@@ -2244,7 +2331,7 @@
+                 // IM 1
+                 IMode = 2'b01;
+               
+-              8'b01011110,8'b01110111  :
++              8'b01011110,8'b01111110  :  // ED 5E, ED 7E (undocumented duplicate; ED 77 is a NOP, Young 3.4)
+                 // IM 2
+                 IMode = 2'b10;
+               
+@@ -2341,60 +2428,58 @@
+               
+               8'b01101111  :
+                 begin
+-                  // RLD
++                  // RLD: MR (HL) in M2, 4 internal T, MW (HL) in M4 (UM0080 RLD: M cycles 4,
++                  // 4/4/3/4/3 T; Sorgelig's T80 fix "Read in M2, not M3!"). Was an extra read at PC.
+                   MCycles = 3'b100;
+                   case (1'b1) // MCycle
++                    MCycle[0] :
++                      Set_Addr_To = aXY;
+                     MCycle[1] :
+                       begin
+-                        NoRead = 1'b1;
+-                        Set_Addr_To = aXY;
+-                      end
+-                    
+-                    MCycle[2] :
+-                      begin
+                         Read_To_Reg = 1'b1;
+                         Set_BusB_To[2:0] = 3'b110;
+                         Set_BusA_To[2:0] = 3'b111;
+                         ALU_Op = 4'b1101;
+-                        TStates = 3'b100;
+-                        Set_Addr_To = aXY;
+                         Save_ALU = 1'b1;
+                       end
+-                    
+-                    MCycle[3] :
++                    MCycle[2] :
+                       begin
++                        TStates = 3'b100;
+                         I_RLD = 1'b1;
+-                        Write = 1'b1;
++                        NoRead = 1'b1;
++                        Set_Addr_To = aXY;
+                       end
+-                    
++                    MCycle[3] :
++                      Write = 1'b1;
+                     default :;
+                   endcase // case(MCycle)
+                 end // case: 8'b01101111
+               
+               8'b01100111  :
+                 begin
+-                  // RRD
++                  // RRD: MR (HL) in M2, 4 internal T, MW (HL) in M4 (UM0080 RRD: M cycles 4,
++                  // 4/4/3/4/3 T; Sorgelig's T80 fix "Read in M2, not M3!"). Was an extra read at PC.
+                   MCycles = 3'b100;
+                   case (1'b1) // MCycle
+-                    MCycle[1] :
++                    MCycle[0] :
+                       Set_Addr_To = aXY;
+-                    MCycle[2] :
++                    MCycle[1] :
+                       begin
+                         Read_To_Reg = 1'b1;
+                         Set_BusB_To[2:0] = 3'b110;
+                         Set_BusA_To[2:0] = 3'b111;
+                         ALU_Op = 4'b1110;
+-                        TStates = 3'b100;
+-                        Set_Addr_To = aXY;
+                         Save_ALU = 1'b1;
+                       end
+-                    
+-                    MCycle[3] :
++                    MCycle[2] :
+                       begin
++                        TStates = 3'b100;
+                         I_RRD = 1'b1;
+-                        Write = 1'b1;
++                        NoRead = 1'b1;
++                        Set_Addr_To = aXY;
+                       end
+-                    
++                    MCycle[3] :
++                      Write = 1'b1;
+                     default :;
+                   endcase // case(MCycle)
+                 end // case: 8'b01100111
+@@ -2476,17 +2561,19 @@
+               
+               8'b10100010 , 8'b10101010 , 8'b10110010 , 8'b10111010  :
+                 begin
+-                  // INI, IND, INIR, INDR
++                  // INI, IND, INIR, INDR: 4/5/4/3 T, IN in M3 (UM0080 INI; as T80)
+                   MCycles = 3'b100;
+                   case (1'b1) // MCycle
+                     MCycle[0] :
+                       begin
++                        TStates = 3'b101;
+                         Set_Addr_To = aBC;
+                         Set_BusB_To = 4'b1010;
+                         Set_BusA_To = 4'b0000;
+                         Read_To_Reg = 1'b1;
+                         Save_ALU = 1'b1;
+                         ALU_Op = 4'b0010;
++                        IncDec_16[3] = IR[3];   // ID16 = BC+-1 for the flags (as T80)
+                       end
+                     
+                     MCycle[1] :
+@@ -2499,17 +2586,12 @@
+                     MCycle[2] :
+                       begin
+                         if (IR[3] == 1'b0 ) 
+-                          begin
+-			    IncDec_16 = 4'b0110;
+-                          end 
++                          IncDec_16 = 4'b0110;
+                         else 
+-                          begin
+-			    IncDec_16 = 4'b1110;
+-                          end
+-                        TStates = 3'b100;
++                          IncDec_16 = 4'b1110;
+                         Write = 1'b1;
+                         I_BTR = 1'b1;
+-                      end // case: 3
++                      end
+                     
+                     MCycle[3] :
+                       begin
+@@ -2523,7 +2605,7 @@
+               
+               8'b10100011 , 8'b10101011 , 8'b10110011 , 8'b10111011  :
+                 begin
+-                  // OUTI, OUTD, OTIR, OTDR
++                  // OUTI, OUTD, OTIR, OTDR: 4/5/3/4 T, HL stepped in M3 (UM0080 OUTI; as T80)
+                   MCycles = 3'b100;
+                   case (1'b1) // MCycle
+                     MCycle[0] :
+@@ -2541,30 +2623,19 @@
+                       begin
+                         Set_BusB_To = 4'b0110;
+                         Set_Addr_To = aBC;
+-                        if (IR[3] == 1'b0 ) 
+-                          begin
+-                            IncDec_16 = 4'b0110;
+-                          end 
+-                        else 
+-                          begin
+-                            IncDec_16 = 4'b1110;
+-                          end
++                        IncDec_16[3] = IR[3];
+                       end
+                     
+                     MCycle[2] :
+                       begin
+                         if (IR[3] == 1'b0 ) 
+-                          begin
+-                            IncDec_16 = 4'b0010;
+-                          end 
++                          IncDec_16 = 4'b0110;
+                         else 
+-                          begin
+-                            IncDec_16 = 4'b1010;
+-                          end
++                          IncDec_16 = 4'b1110;
+                         IORQ = 1'b1;
+                         Write = 1'b1;
+                         I_BTR = 1'b1;
+-                      end // case: 3
++                      end
+                     
+                     MCycle[3] :
+                       begin

@@ -77,12 +77,12 @@ use work.vdp18_pack.all;
 entity vdp18_core is
 
   generic (
-    is_pal_g      : integer := 0;
     compat_rgb_g  : integer := 0
   );
   port (
     -- Global Interface -------------------------------------------------------
     clk_i         : in  std_logic;
+    pal_i         : in  std_logic;   -- 1 = PAL (TMS9929A), 0 = NTSC (TMS9928A)
     clk_en_10m7_i : in  std_logic;
     reset_n_i     : in  std_logic;
     -- CPU Interface ----------------------------------------------------------
@@ -92,6 +92,7 @@ entity vdp18_core is
     int_n_o       : out std_logic;
     cd_i          : in  std_logic_vector(0 to  7);
     cd_o          : out std_logic_vector(0 to  7);
+    cpu_busy_o    : out std_logic;   -- the last CPU VRAM access is still pending
     -- VRAM Interface ---------------------------------------------------------
     vram_we_o     : out std_logic;
     vram_a_o      : out std_logic_vector(0 to 13);
@@ -174,6 +175,7 @@ architecture struct of vdp18_core is
   signal spr_coll_s       : boolean;
 
   signal irq_s            : boolean;
+  signal cpu_busy_s       : boolean;
 
   signal blank_n          : boolean;
   signal hblank_n          : boolean;
@@ -210,11 +212,9 @@ begin
   -- Horizontal and Vertical Timing Generator
   -----------------------------------------------------------------------------
   hor_vert_b : work.vdp18_hor_vert
-    generic map (
-      is_pal_g => is_pal_g
-    )
     port map (
       clk_i         => clk_i,
+      pal_i         => pal_i,
       clk_en_5m37_i => clk_en_5m37_s,
       reset_i       => reset_s,
       opmode_i      => opmode_s,
@@ -293,8 +293,10 @@ begin
       reg_col1_o    => reg_col1_s,
       reg_col0_o    => reg_col0_s,
       irq_i         => irq_s,
-      int_n_o       => int_n_o
+      int_n_o       => int_n_o,
+      busy_o        => cpu_busy_s
     );
+  cpu_busy_o <= '1' when cpu_busy_s else '0';
 
 
   -----------------------------------------------------------------------------

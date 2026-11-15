@@ -114,31 +114,24 @@ begin
     -- I/O access -------------------------------------------------------------
     if iorq_n_i = '0' and m1_n_i = '1' then
 
---VDP	
-      if a_i(7 downto 0) = x"80" and wr_n_i = '0' then
-        vdp_w_n_o <= '0';
-      elsif a_i(7 downto 0) = x"81" and wr_n_i = '0' then
-        vdp_w_n_o <= '0';
-      end if;		
-      if a_i(7 downto 0) = x"84" and rd_n_i = '0' then
-        vdp_r_n_o <= '0';
-      elsif a_i(7 downto 0) = x"85" and rd_n_i = '0' then
-        vdp_r_n_o <= '0';
-      end if;		
-		
---AY		
-      if a_i(7 downto 0) = x"88" and wr_n_i = '0' then
-        ay_addr_we_n_o  <= '0';
-      elsif a_i(7 downto 0) = x"8C" and wr_n_i = '0' then
-        ay_data_we_n_o  <= '0';
-      elsif a_i(7 downto 0) = x"90" and rd_n_i = '0' then
-        ay_data_rd_n_o  <= '0';
-      end if;		
-		
---8255
-		if a_i(7 downto 0) >= x"94" and a_i(7 downto 0) <= x"9B" then
-		  u8255_cs_n_o <= '0';    
-		end if;
+-- STM-A sheet 2 (decode logic): IC21 LS138 enabled by A7 = 1 and A6 = 0,
+-- selected by A4..A2. A5, A1 and A0 are not decoded, so each device also
+-- answers 20h higher (A0-BFh) and on all four ports of its group:
+--   Y0 80-83 VDP write  Y1 84-87 VDP read   Y2 88-8B PSG latch
+--   Y3 8C-8F PSG write  Y4 90-93 PSG read   Y5 94-97 PPI write
+--   Y6 98-9B PPI read   Y7 9C-9F unused     (MAME mirrors VDP/PSG the same way)
+      if a_i(7 downto 6) = "10" then
+        case a_i(4 downto 2) is
+          when "000" => vdp_w_n_o      <= wr_n_i;
+          when "001" => vdp_r_n_o      <= rd_n_i;
+          when "010" => ay_addr_we_n_o <= wr_n_i;
+          when "011" => ay_data_we_n_o <= wr_n_i;
+          when "100" => ay_data_rd_n_o <= rd_n_i;
+          when "101" => u8255_cs_n_o   <= wr_n_i;
+          when "110" => u8255_cs_n_o   <= rd_n_i;
+          when others => null;
+        end case;
+      end if;
 
     end if;
   end if;	 

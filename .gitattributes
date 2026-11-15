@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# sys/ is a byte-for-byte copy of Template_MiSTer (which keeps CRLF files): no normalization
+sys/** -text

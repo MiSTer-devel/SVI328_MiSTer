@@ -8,6 +8,7 @@ the core's own Verilog (`rtl/svi_mapper.v`, `rtl/cassette.v`,
 
     make                       # Verilator 5.x + zlib -> obj_dir/Vsvi_sim (10.7 MHz rate, fast)
     make full                  # obj_full/Vsvi_sim: clk_sys rate, Svi328.sv's enables, --turbo
+    make tv80                  # obj_tv80/Vsvi_sim: tv80e instead of t80sv (rtl_sv/tv80)
     ./obj_dir/Vsvi_sim --help
 
 Run from this directory: the default ROM is `../software/mister11/boot.rom`.
@@ -39,7 +40,7 @@ Frames are PNG (`OUTDIR/frame_NNNNN.png`), the active picture only.
 | Hardware (`Svi328.sv`, `rtl/`) | Simulator |
 |---|---|
 | `cv_console.vhd`, `cv_addr_dec.vhd`, `cv_bus_mux.vhd`, `74ls74.vhd` | `rtl_sv/svi_console.sv` (one file, same logic) |
-| T80pa (`rtl/T80`) | tv80e (`rtl_sv/tv80`, from ColecoAdam_MiSTer 5dc296a) |
+| t80sv_T80pa (`rtl/t80sv`) | the same file (`make tv80`: tv80e, `rtl_sv/tv80`, from ColecoAdam_MiSTer 5dc296a, fixed) |
 | vdp18 VHDL (`rtl/vdp18`) | vdp18v (`rtl_sv/vdp18v`, ColecoAdam's SV TMS9918A with its sprite/5th-sprite fixes; SVI's vsync change 6ca3b9c ported into `vdp18_hor_vert.sv`) |
 | `keyboard_svi.vhd` | `rtl_sv/svi_keyboard.sv`, table for table, bugs included |
 | `cv_por.vhd`, `cv_clock.vhd` | ColecoAdam's `cv_por.sv`, `cv_clock.sv` |
@@ -51,7 +52,9 @@ Frames are PNG (`OUTDIR/frame_NNNNN.png`), the active picture only.
 | `video_mixer`, ADC tape input | not modelled |
 
 OSD settings: `--ntsc`, `--318`, `--mem-std`, `--no-overlay`, `--disk FILE`
-/ `--fdc` (SV-801), `--80col` / `--show80` / `--charrom FILE` (SV-806).
+/ `--fdc` (SV-801), `--80col` / `--show80` / `--charrom FILE` (SV-806),
+`--display auto|80|vdp` (OSD Display; default `auto`). `--disp-log` logs VDP
+writes and SV-806 display-RAM writes per frame and port 58h writes.
 
 **Clocks.** The sim clock is the 10.7 MHz rate (`clk_en_10m7` tied to 1),
 as in ColecoAdam's simulator; hardware runs clk_sys = 42.954545 MHz with a /4
@@ -60,9 +63,9 @@ come at 21.477 MHz; here they come at 5.369 MHz, so the Makefile builds
 `gen/square_gen.v` from `rtl/square_gen.v` with `STP` = 4 x 24'hEF3. Bit
 timing and byte stream are the same.
 
-**Not the same as hardware:** the CPU and VDP models differ (above): tv80
-fails some documented-flag tests that T80 passes (DAA, `LD A,R`; see
-`cpu_tests/README.md`). In the fast build the SV-806 dot clock is 10.7 MHz
+**Not the same as hardware:** the VDP model differs (above). The CPU is the
+hardware's t80sv; `make tv80` swaps in tv80e, whose bus strobes are one T-state
+wide and whose undocumented flags differ (see `cpu_tests/README.md`). In the fast build the SV-806 dot clock is 10.7 MHz
 instead of 12. Something that works here and fails on a MiSTer points at
 those.
 

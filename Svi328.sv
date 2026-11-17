@@ -32,9 +32,9 @@
 //  - Tape Load Graphical wave (file only)
 //  - Tape Counter (progress bar)
 
-//Core : 
-//Z80 - 3,5555Mhz
-//AY - z80/2 = 1,777 Mhz
+//Core :
+//Z80 - 3,579545 MHz (42.954545/12)
+//AY - z80/2 = 1,789772 MHz
 //Mess :
 //Z80 - 3,579545
 //AY - 1,789772
@@ -54,7 +54,6 @@ assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
  
 assign LED_USER   = ioctl_download;
-assign LED_DISK  = {1'b0, svi_audio_in | (cfg[23] & fdc_led)};
 assign LED_POWER  = 0;
 assign BUTTONS    = 0;
 assign VGA_SCALER = 0;
@@ -67,29 +66,17 @@ assign HDMI_BOB_DEINT = 0;
 wire [127:0] status;
 reg  [127:0] cfg = 0;    // settings latched at reset (below)
 
-wire [1:0] ar = cfg[2:1];
-wire vga_de;
-reg  en216p;
-always @(posedge CLK_VIDEO) en216p <= ((HDMI_WIDTH == 1920) && (HDMI_HEIGHT == 1080) && !forced_scandoubler && !scale);
-
-video_freak video_freak
-(
-	.*,
-	.VGA_DE_IN(vga_de),
-	.ARX((!ar) ? 12'd4 : (ar - 1'd1)),
-	.ARY((!ar) ? 12'd3 : 12'd0),
-	.CROP_SIZE(en216p ? 10'd216 : 10'd0),
-	.CROP_OFF(0),
-	.SCALE(cfg[11:10])
-);
 
 `include "build_id.v" 
 // OSD after ~/dev2/osd-standard.md and tape-standard.md. Status bits keep
 // their old positions, so saved settings stay valid.
-//   live:  1 Tape input (media), 3 Joysticks swap (input), 16 Tape speed
-//          (taken when the deck starts), 17 Tape overlay, 19 Tape audio,
-//          buttons 13 Rewind tape, 18 Eject cartridge
+//   live:  1-2 Aspect ratio, 7-9 Scandoubler Fx, 10-11 Scale (video-standard.md
+//          rule 3), 15 Tape input (media), 3 Joysticks swap (input), 16 Tape
+//          speed (taken when the deck starts), 17 Tape overlay, 19 Tape audio,
+//          25-26 Display, buttons 13 Rewind tape, 18 Eject cartridge
 //   reset: everything else, latched into cfg (Apply and reset)
+// "v,1": 2026-11-16 SV-801/SV-806 default On (value lists now On,Off) and
+// Display's 0 became Auto, so older .CFG files are dropped (osd-standard rule 11).
 parameter CONF_STR = {
 	"SVI328;;",
 	"-;",
@@ -111,8 +98,8 @@ parameter CONF_STR = {
 	"R[0],Apply and reset;",
 
 	"P1O[21],Model,SVI-328,SVI-318;",
-	"P1O[23],SV-801 disk,Off,On;",
-	"P1O[24],SV-806 80-column,Off,On;",
+	"P1O[23],SV-801 disk,On,Off;",
+	"P1O[24],SV-806 80-column,On,Off;",
 	"P1-;",
 	"P1O[15],Tape input,File,ADC;",
 	"H1P1O[16],Tape speed,4x,Normal;",
@@ -122,13 +109,15 @@ parameter CONF_STR = {
 	"h1P1-;",
 	"P1T[18],Eject cartridge;",
 
-	"P2O[2:1],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
-	"P2O[11:10],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
-	"P2O[8:7],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%;",
-	"H3P2O[25],Display,VDP,80-column;",
+	"H3P2O[26:25],Display,Auto,80-column,VDP;",
 	"h3P2-;",
 	"P2O[20],Video standard,PAL,NTSC;",
 	"P2O[6],Border,No,Yes;",
+	"P2-;",
+	"P2O[2:1],Aspect ratio,Original,Full Screen,[ARC1],[ARC2];",
+	"P2O[11:10],Scale,Normal,V-Integer,Narrower HV-Integer,Wider HV-Integer;",
+	"P2O[9:7],Scandoubler Fx,None,HQ2x,CRT 25%,CRT 50%,CRT 75%;",
+	"P2-;",
 	"H1P2O[17],Tape overlay,On,Off;",
 	"h1P2-;",
 
@@ -140,6 +129,7 @@ parameter CONF_STR = {
 	"I,Tape ready (rewound);",
 	"J,Fire;",
 	"jn,A;",
+	"v,1;",
 	"V,v",`BUILD_DATE
 };
 
@@ -157,23 +147,23 @@ pll pll
 );
 
 reg ce_10m7 = 0;
-reg ce_5m3 = 0;
-reg ce_21m3 = 0;
+reg ce_5m37 = 0;
+reg ce_21m48 = 0;
 always @(posedge clk_sys) begin
 	reg [2:0] div;
 	
 	div <= div+1'd1;
 	ce_10m7 <= !div[1:0];
-	ce_5m3  <= !div[2:0];
-	ce_21m3 <= div[0];
+	ce_5m37  <= !div[2:0];
+	ce_21m48 <= div[0];
 end
 
-// 1.79 MHz for the FDC (ce_5m3 / 3): the disk's timebase, not sped up by turbo.
+// 1.79 MHz for the FDC (ce_5m37 / 3): the disk's timebase, not sped up by turbo.
 reg ce_1m79 = 0;
 always @(posedge clk_sys) begin
 	reg [1:0] d3;
 	ce_1m79 <= 0;
-	if (ce_5m3) begin
+	if (ce_5m37) begin
 		d3 <= (d3 == 2'd2) ? 2'd0 : d3 + 2'd1;
 		ce_1m79 <= (d3 == 2'd0);
 	end
@@ -211,6 +201,8 @@ wire ioctl_isCART  = ioctl_index[5:0] == 6'd1;      // Cartridge (.bin 01h, .rom
 wire ioctl_isROM   = ioctl_isBASIC | ioctl_isCART;  // CPU memory {index[0], A15:0}
 wire ioctl_isCAS   = ioctl_index[5:0] == 6'd2;
 wire ioctl_is806   = ioctl_index == 8'h40;          // boot1.rom: SV-806 character ROM
+reg  m806_rom = 1'b0;                               // boot1.rom has loaded
+always @(posedge clk_sys) if (ioctl_wr && ioctl_download && ioctl_is806) m806_rom <= 1'b1;
 wire [24:0] ioctl_addr;
 wire  [7:0] ioctl_dout;
 wire        forced_scandoubler;
@@ -241,7 +233,7 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(1)) hps_io
 	.ioctl_dout(ioctl_dout),
 	.ioctl_wait(ioctl_wait),
 
-	.status_menumask({12'd0, ~status[24], ~status[23], status[15], pending}),
+	.status_menumask({12'd0, status[24] | ~m806_rom, status[23], status[15], pending}),
 
 	.img_mounted(img_mounted),
 	.img_readonly(img_readonly),
@@ -272,7 +264,15 @@ wire reset = RESET | status[0] | buttons[1] | (ioctl_download && ioctl_isROM) | 
 // Settings the machine runs with, taken from the OSD at every reset (osd-standard
 // rule 1). "Changes pending" while one of them differs from the OSD.
 always @(posedge clk_sys) if (reset) cfg <= status;
-wire pending = {status[24:20], status[2:1], status[11:6]} != {cfg[24:20], cfg[2:1], cfg[11:6]};
+// The expansion cards (osd-standard: On is the default, value 0). The SV-806 is
+// present only once boot1.rom (its character ROM) has loaded: without it the
+// card would show blank characters, so Disk BASIC and CP/M stay on the VDP.
+wire fdc_on  = ~cfg[23];
+wire m806_on = ~cfg[24] & m806_rom;
+
+assign LED_DISK = {1'b0, svi_audio_in | (fdc_on & fdc_led)};
+
+wire pending = {status[24:20], status[6]} != {cfg[24:20], cfg[6]};
 
 // Eject cartridge (status[18]): the cartridge leaves the machine at once,
 // and the machine resets as when a cartridge is pulled out with the power on.
@@ -443,7 +443,7 @@ cv_console console
 	.clk_i(clk_sys),
 	.pal_i(~cfg[20]),
 	.clk_en_10m7_i(ce_10m7),
-	.clk_en_5m3_i(ce_5m3),
+	.clk_en_5m37_i(ce_5m37),
 	.clk_en_cpu_p_i(ce_cpu_p),
 	.clk_en_cpu_n_i(ce_cpu_n),
 	.reset_n_i(~reset),
@@ -500,13 +500,29 @@ cv_console console
 assign VGA_F1 = 0;
 assign VGA_SL = sl[1:0];
 
-// 4 choices in 2 bits (bit 9 was always 0, so saved .CFG files keep their value)
-wire [1:0] scale = cfg[8:7];
-wire [1:0] sl = scale ? scale - 1'd1 : 2'd0;
+// Aspect ratio, Scale and Scandoubler Fx change the monitor, not the machine:
+// they act at once (video-standard.md rule 3), read from status, not cfg.
+// Fx: 0 None, 1 HQ2x, 2-4 CRT 25/50/75% (VGA_SL 1-3).
+wire [2:0] sfx = status[9:7];
+wire [2:0] sl3 = sfx - 3'd1;
+wire [1:0] sl  = (sfx >= 3'd2 && sfx <= 3'd4) ? sl3[1:0] : 2'd0;
 
-// Display (status[25], acts at once): the VDP, or the SV-806's own monochrome
+// Display (status[26:25], acts at once): the VDP, or the SV-806's own monochrome
 // output (a second monitor on the real machine). Only with the card present.
-wire show80 = cfg[24] & status[25];
+// 0 = Auto (the screen the software writes to, rtl/sv806/sv806_auto.sv),
+// 1 = 80-column, 2/3 = VDP. Old .CFG files: VDP (0) becomes Auto, 80-column
+// stays.
+wire auto80;
+sv806_auto sv806_auto
+(
+	.clk(clk_sys),
+	.reset(reset),
+	.enable(m806_on),
+	.m806_wr(m806_ramdis & ~ram_we_n),
+	.vdp_wr(~cpu_iorq_n & cpu_m1_n & ~ram_we_n & cpu_ram_a[7:6] == 2'b10 & cpu_ram_a[4:2] == 3'b000),
+	.show80(auto80)
+);
+wire show80 = m806_on & ((status[26:25] == 2'd1) | ((status[26:25] == 2'd0) & auto80));
 
 // SV-806 blanking from the CRTC's display enable: vertical blanking starts at
 // the first line without DE and ends with the first DE.
@@ -538,14 +554,16 @@ wire freeze_sync;
 wire [23:0] rgb80 = (m806_de & m806_video) ? 24'h33FF33 : 24'h000000;   // green phosphor (MAME)
 wire [23:0] rgb_o = show80 ? rgb80 : ov_rgb;
 
+wire vga_de;
+
 video_mixer #(.LINE_LENGTH(640), .GAMMA(1)) video_mixer
 (
 	.*,
 
-	.ce_pix(show80 ? ce_12m : ce_5m3),
+	.ce_pix(show80 ? ce_12m : ce_5m37),
 
-	.scandoubler(scale || forced_scandoubler),
-	.hq2x(scale==1),
+	.scandoubler((sfx != 3'd0) || forced_scandoubler),
+	.hq2x(sfx == 3'd1),
 
 	.VGA_DE(vga_de),
 	.R(rgb_o[23:16]),
@@ -557,6 +575,39 @@ video_mixer #(.LINE_LENGTH(640), .GAMMA(1)) video_mixer
 	.VSync(vs_o),
 	.HBlank(show80 ? ~m806_de : hblank),
 	.VBlank(show80 ? (m806_vb & ~m806_de) : vblank)
+);
+
+// Original aspect ratio (video-standard.md, Sizes): ARX:ARY = hsize x PAR : vsize,
+// PAR = square-pixel rate / pixel rate. Square-pixel rate: PAL 7.375 MHz,
+// NTSC 6.1364 MHz (12/7 fsc). Sizes as the scaler receives them:
+//   VDP, 5.3693 MHz (42.954545/8):
+//     PAL     256 x 192  -> 1.8314  3932:2147
+//     PAL     284 x 292  -> 1.3359  3969:2971  (Border = Yes)
+//     NTSC    256 x 192  -> 1.5238  32:21      (PAR 8/7, as the MSX)
+//     NTSC    284 x 241  -> 1.3468  2272:1687  (Border = Yes)
+//   SV-806, 12 MHz dot clock, 50 Hz (PAL square-pixel rate):
+//             560 x 192  -> 1.7925  2065:1152
+// The VDP's video standard and border are machine settings (cfg); Display acts
+// at once (show80). No vertical crop: 192 lines already give 5x at 1080p.
+wire [1:0] ar = status[2:1];
+reg [11:0] orig_x, orig_y;
+always @(posedge CLK_VIDEO) begin
+	if (show80)                {orig_x, orig_y} <= {12'd2065, 12'd1152};
+	else if (~cfg[20] & ~cfg[6]) {orig_x, orig_y} <= {12'd3932, 12'd2147};
+	else if (~cfg[20])         {orig_x, orig_y} <= {12'd3969, 12'd2971};
+	else if (~cfg[6])          {orig_x, orig_y} <= {12'd32,   12'd21};
+	else                       {orig_x, orig_y} <= {12'd2272, 12'd1687};
+end
+
+video_freak video_freak
+(
+	.*,
+	.VGA_DE_IN(vga_de),
+	.ARX((!ar) ? orig_x : {10'd0, ar - 2'd1}),
+	.ARY((!ar) ? orig_y : 12'd0),
+	.CROP_SIZE(12'd0),
+	.CROP_OFF(5'd0),
+	.SCALE({1'b0, status[11:10]})
 );
 
 
@@ -574,7 +625,7 @@ sv801 sv801
 	.clk(clk_sys),
 	.ce(ce_1m79),
 	.reset(reset),
-	.enable(cfg[23]),
+	.enable(fdc_on),
 
 	.iorq(~cpu_iorq_n & cpu_m1_n),
 	.rd(~ram_rd_n),
@@ -608,7 +659,7 @@ sv806 sv806
 	.cpu_ce(ce_cpu_p),
 	.pix_ce(ce_12m),
 	.reset(reset),
-	.enable(cfg[24]),
+	.enable(m806_on),
 
 	.cpu_addr(cpu_ram_a),
 	.cpu_din(ram_do),
@@ -693,7 +744,7 @@ assign tape_ended = (CAS_status == 3'd5);   // cassette.v ENDED
 cassette CASReader(
 
   .clk(clk_sys), 
-  .Q(ce_21m3), //  42.954545/2
+  .Q(ce_21m48), //  42.954545/2
   .play(play), 
   .rewind(rewind),
   .tape_end(tape_end),
@@ -766,7 +817,7 @@ svi_tape_status tape_status
 svi_tape_overlay #(.FACTOR(4'd4)) tape_overlay
 (
 	.clk(CLK_VIDEO),
-	.ce_pix(ce_5m3),
+	.ce_pix(ce_5m37),
 	.hblank(hblank),
 	.vblank(vblank),
 	.enable(~status[17] & ~status[15]),

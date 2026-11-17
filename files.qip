@@ -1,4 +1,4 @@
-set_global_assignment -name QIP_FILE rtl/T80/T80.qip
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/t80sv/t80sv_all.sv
 set_global_assignment -name QIP_FILE rtl/Jt49/jt49.qip
 
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sdram.sv
@@ -40,6 +40,7 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/tape_overlay.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sv801/sv801.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sv801/wd1793.sv
 set_global_assignment -name SYSTEMVERILOG_FILE rtl/sv806/sv806.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/sv806/sv806_auto.sv
 set_global_assignment -name VERILOG_FILE rtl/sv806/um6845r.v
 
 set_global_assignment -name SYSTEMVERILOG_FILE Svi328.sv

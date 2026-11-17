@@ -89,7 +89,7 @@ def failures(rows, cpu, doc):
         pick = ex[0]
         for e in ex:
             f = e.split('|')[0]
-            if doc and f not in ('f53', 'wz', 'bustime'):
+            if doc and f not in ('f53', 'wz', 'q', 'bustime'):
                 pick = e
                 break
         out.append('| %s | %s | %d | %s | `%s` |' % (name, u or 'official', r[key], r['fields'].replace(',', ', '),

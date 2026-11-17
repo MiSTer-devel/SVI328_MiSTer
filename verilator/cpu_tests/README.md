@@ -1,4 +1,24 @@
-# Z80 CPU tests: tv80 vs T80
+# Z80 CPU tests: tv80 vs T80, and t80sv
+
+**Update 2026-11-17: the hardware build and the simulator both use t80sv now** (`../../rtl/t80sv`,
+`t80sv_T80pa`, a SystemVerilog translation of T80 0250 by Rodimus, patched here to pass every
+SingleStepTests case; `rtl/t80sv/README.md`). `rtl/T80` (T80 0247) was removed; the bench's T80
+slot is now t80sv, built straight from the SystemVerilog (no GHDL step), and also checks Q.
+Results in `results/t80sv/`:
+
+- SingleStepTests: **1,604,000 / 1,604,000** pass, every field including WZ, Q, flag bits 5/3,
+  bus cycle order and strobe positions (`t80sv_summary.md`).
+- Interrupt acknowledge timing: exact in every case, with and without the M1 wait state
+  (`t80sv_irq*.tsv`), the same as T80.
+- With the M1 wait state (`t80sv_sst_m1wait.tsv`): only `EI` (FB, DD FB, FD FB) differs, in
+  IFF1/IFF2 at the bench's sample point: T80 sets them in T2 of the next fetch and the wait state
+  moves T2 later. The original T80 does the same, and an interrupt pending before `EI` is still
+  taken after the next instruction (the irq case "INT low before EI" is exact).
+- ZEXDOC / ZEXALL: 67 / 67 each (`t80sv_zexdoc.log`, `t80sv_zexall.log`).
+
+The sections below are the earlier tv80 vs T80 0247 study; its T80 numbers (`results/t80_*`)
+come from the removed `rtl/T80` through GHDL (see git history before this change for that
+Makefile and `ghdl/tb_t80.vhd`). New runs write to `results/latest/` (git-ignored).
 
 Question: is tv80 (`../rtl_sv/tv80`, the CPU of the Verilator simulator, copied from
 ColecoAdam_MiSTer where it runs on hardware) correct enough to replace T80 (`../../rtl/T80`,
@@ -45,16 +65,15 @@ the tv80 bugs listed in [tv80 bugs](#tv80-bugs-not-in-t80) first.
 
 ## Build and run
 
-Needs Verilator 5 (built with 5.044), GHDL with `--synth` (5.1.1, LLVM backend), python3, git, curl.
+Needs Verilator 5 (built with 5.044), python3, git, curl. (GHDL was needed only for the removed T80 netlist.)
 
     make vectors        # SingleStepTests (git, 1.3 GB JSON) + ZEXDOC/ZEXALL into vectors/, JSON -> vectors/sst_txt
-    make                # obj_tv80/Vtv80e and obj_t80/VT80pa
-    make sst            # all 1.6M tests on both CPUs (about 30 s each) -> results/{tv80,t80}_sst.tsv, results/summary.md
+    make                # obj_tv80/Vtv80e and obj_t80sv/VT80pa
+    make sst            # all 1.6M tests on both CPUs (about 15 s each) -> results/latest/{tv80,t80sv}_sst.tsv, summary.md
     make sst-one OP=ed_b0   # one opcode file, first failures printed
-    make sst-m1wait     # with the SVI M1 wait state -> results/*_sst_m1wait.tsv
-    make irq            # interrupt acknowledge timing -> results/*_irq*.tsv
+    make sst-m1wait     # with the SVI M1 wait state -> results/latest/*_sst_m1wait.tsv
+    make irq            # interrupt acknowledge timing -> results/latest/*_irq*.tsv
     make zex            # ZEXDOC+ZEXALL on both CPUs, 4 jobs in parallel; hours (see below)
-    make ghdl-check N=25    # T80 netlist vs GHDL simulation of the VHDL, N tests per opcode
 
 The bench binaries take `sst FILE.txt...`, `zex FILE.com [--max-t N]`, `irq`, and
 `--m1wait`, `--verbose N` (failing tests printed per file), `--trace` (pins per T-state),
@@ -238,7 +257,7 @@ the SVI BIOS tape routines come out the same on both.
 
 T80pa reproduces the datasheet. tv80e's strobes are one T-state long (two for I/O) and start a
 half T-state late, with no address setup before MREQ; the SVI glue (cv_console/svi_mapper/SDRAM
-at 42.66 MHz, 12 clk_sys per T-state) was built and tested with T80pa's shapes. tv80 runs on
+at 42.954545 MHz, 12 clk_sys per T-state) was built and tested with T80pa's shapes. tv80 runs on
 hardware in ColecoAdam_MiSTer, so the shapes can work, but a switch on the SVI core would have to
 be checked on hardware (the simulator's SDRAM has no latency and cannot show this).
 

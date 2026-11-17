@@ -57,6 +57,8 @@ module vdp18_col_mux
    input              reset_i,
    input              vert_active_i,
    input              hor_active_i,
+   input              hor_window_i,
+   input              vert_window_i,
    input              border_i,
    input              blank_i,
    input              hblank_i,
@@ -196,8 +198,8 @@ module vdp18_col_mux
                 blank_n_o <= ~blank_i;
                 if (~border_i)
                   begin
-                    hblank_n_o <= hor_active_i;
-                    vblank_n_o <= vert_active_i;
+                    hblank_n_o <= hor_window_i;
+                    vblank_n_o <= vert_window_i;
                   end
                 else
                   begin

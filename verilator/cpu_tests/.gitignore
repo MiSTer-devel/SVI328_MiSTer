@@ -1,12 +1,7 @@
 obj_tv80/
-obj_t80/
-gen/
+obj_t80sv/
 results/bin/
-results/ghdl_check/tests.txt
 results/*_raw.*
 results/*_chk.tsv
-ghdl/*.o
-ghdl/*.cf
-ghdl/tb_t80
-ghdl/e~*
 results/fix/Vtv80e_*
+results/latest/

@@ -12,13 +12,13 @@ V_SRC = sim.vlt svi_sim.sv \
 	$(SV)/vdp18v/vdp18_addr_mux.sv $(SV)/vdp18v/vdp18_col_mux.sv $(SV)/vdp18v/vdp18_cpuio.sv \
 	$(SV)/vdp18v/vdp18_ctrl.sv $(SV)/vdp18v/vdp18_hor_vert.sv $(SV)/vdp18v/vdp18_pattern.sv \
 	$(SV)/vdp18v/vdp18_sprite.sv \
-	$(SV)/tv80/tv80_alu.v $(SV)/tv80/tv80_core.v $(SV)/tv80/tv80_mcode.v $(SV)/tv80/tv80_reg.v $(SV)/tv80/tv80e.v \
+	$(RTL)/t80sv/t80sv_all.sv \
 	$(RTL)/svi_mapper.v $(RTL)/cassette.v gen/square_gen.v $(RTL)/jt8255.v $(RTL)/tape_overlay.sv \
-	$(RTL)/sv801/sv801.sv $(RTL)/sv801/wd1793.sv $(RTL)/sv806/sv806.sv $(RTL)/sv806/um6845r.v \
+	$(RTL)/sv801/sv801.sv $(RTL)/sv801/wd1793.sv $(RTL)/sv806/sv806.sv $(RTL)/sv806/sv806_auto.sv $(RTL)/sv806/um6845r.v \
 	$(RTL)/Jt49/jt49_bus.v $(RTL)/Jt49/jt49.v $(RTL)/Jt49/jt49_cen.v $(RTL)/Jt49/jt49_div.v \
 	$(RTL)/Jt49/jt49_eg.v $(RTL)/Jt49/jt49_exp.v $(RTL)/Jt49/jt49_noise.v
 
-# --no-timing: tv80 uses "<= #1"
+# --no-timing: tv80 (make tv80) uses "<= #1"
 V_FLAGS = --cc --exe --build -j 0 --top-module $(TOP) --no-timing -Wno-fatal -Wno-lint -Wno-style \
 	--x-assign fast --x-initial fast --noassert -O3 \
 	+incdir+$(SV)/vdp18v +incdir+$(SV)/tv80 +incdir+$(RTL) \
@@ -42,23 +42,13 @@ full: obj_full/V$(TOP)
 obj_full/V$(TOP): $(FULL_SRC) sim_main.cpp Makefile
 	verilator $(V_FLAGS) --Mdir obj_full -GFULL=1 -CFLAGS -DSIM_FULL=1 $(FULL_SRC) sim_main.cpp
 
-# The hardware's CPU (T80pa netlist from cpu_tests, `make -C cpu_tests gen/t80pa_synth.v`)
-# instead of tv80: slower, but the same CPU as the Quartus build.
-T80_NET = gen/t80pa_synth.v
-# the netlist uses names like "do": read it as Verilog-2005
-gen/t80pa_synth.v: cpu_tests/gen/t80pa_synth.v
-	mkdir -p gen
-	{ echo '`begin_keywords "1364-2005"'; cat $<; echo '`end_keywords'; } > $@
-T80_SRC = $(filter-out $(SV)/tv80/%,$(V_SRC)) $(T80_NET)
-t80: obj_t80/V$(TOP)
-full-t80: obj_full_t80/V$(TOP)
+# tv80e (rtl_sv/tv80) instead of the hardware's t80sv
+TV80_SRC = $(filter-out $(RTL)/t80sv/%,$(V_SRC)) \
+	$(SV)/tv80/tv80_alu.v $(SV)/tv80/tv80_core.v $(SV)/tv80/tv80_mcode.v $(SV)/tv80/tv80_reg.v $(SV)/tv80/tv80e.v
+tv80: obj_tv80/V$(TOP)
 
-obj_t80/V$(TOP): $(T80_SRC) gen/square_gen.v sim_main.cpp Makefile
-	verilator $(V_FLAGS) --Mdir obj_t80 +define+SIM_T80 -CFLAGS -DSIM_T80 $(T80_SRC) sim_main.cpp
-
-obj_full_t80/V$(TOP): $(subst gen/square_gen.v,$(RTL)/square_gen.v,$(T80_SRC)) sim_main.cpp Makefile
-	verilator $(V_FLAGS) --Mdir obj_full_t80 +define+SIM_T80 -GFULL=1 -CFLAGS -DSIM_FULL=1 -CFLAGS -DSIM_T80 \
-		$(subst gen/square_gen.v,$(RTL)/square_gen.v,$(T80_SRC)) sim_main.cpp
+obj_tv80/V$(TOP): $(TV80_SRC) gen/square_gen.v sim_main.cpp Makefile
+	verilator $(V_FLAGS) --Mdir obj_tv80 +define+SIM_TV80 -CFLAGS -DSIM_TV80 $(TV80_SRC) sim_main.cpp
 
 clean:
-	rm -rf obj_dir obj_full obj_t80 obj_full_t80 gen
+	rm -rf obj_dir obj_full obj_tv80 gen

@@ -1,0 +1,4 @@
+`verilator_config
+// WZ (MEMPTR) and Fw (Q: "this instruction wrote F") are not in DIR / REG: the bench reads and writes them directly
+public_flat_rw -module "t80sv_core" -var "WZ"
+public_flat_rw -module "t80sv_core" -var "Fw"

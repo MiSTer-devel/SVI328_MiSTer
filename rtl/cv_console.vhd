@@ -71,8 +71,8 @@ entity cv_console is
     clk_i           : in  std_logic;
     pal_i           : in  std_logic;   -- video standard: 1 = PAL, 0 = NTSC
     clk_en_10m7_i   : in  std_logic;
-	 clk_en_5m3_i   : in  std_logic;
-    -- Z80 clock enables from the top level (3.555 MHz, 4x while turbo)
+	 clk_en_5m37_i   : in  std_logic;
+    -- Z80 clock enables from the top level (3.579545 MHz, 4x while turbo)
     clk_en_cpu_p_i  : in  std_logic;
     clk_en_cpu_n_i  : in  std_logic;
     reset_n_i       : in  std_logic;
@@ -186,6 +186,23 @@ architecture struct of cv_console is
 	 );
 	end component;
   
+  -- t80sv (rtl/t80sv): SystemVerilog T80, a drop-in for T80pa with the same ports,
+  -- patched to pass all SingleStepTests/z80 cases (see rtl/t80sv/README.md).
+  component t80sv_T80pa
+    generic (Mode : integer := 0);
+    port (
+      RESET_n, CLK, CEN_p, CEN_n, WAIT_n, INT_n, NMI_n, BUSRQ_n : in std_logic;
+      M1_n, MREQ_n, IORQ_n, RD_n, WR_n, RFSH_n, HALT_n, BUSAK_n : out std_logic;
+      OUT0      : in  std_logic;
+      A         : out std_logic_vector(15 downto 0);
+      DI        : in  std_logic_vector(7 downto 0);
+      DO        : out std_logic_vector(7 downto 0);
+      R800_mode : in  std_logic;
+      REG       : out std_logic_vector(211 downto 0);
+      DIRSet    : in  std_logic;
+      DIR       : in  std_logic_vector(211 downto 0));
+  end component;
+
   component ls74 IS
   port(d,
 	  clr,
@@ -297,24 +314,26 @@ begin
   -- Clock generation
   -----------------------------------------------------------------------------
   -- Z80: enables come from the top level (Svi328.sv), so turbo can change
-  -- the rate. They were cv_clock(clk_en_10m7) = 3.555 MHz, which is still the
+  -- the rate. They were cv_clock(clk_en_10m7) = 3.579545 MHz, which is still the
   -- normal rate.
   clk_en_3m58_p_s <= clk_en_cpu_p_i;
   clk_en_3m58_n_s <= clk_en_cpu_n_i;
 
+  -- AY-3-8910: 5.369 MHz / 3 = 1.79 MHz. cv_clock is the ColecoVision divide-by-3,
+  -- so its port names (10m7 in, 3m58 out) are the ColecoVision rates, not these.
   clock_b2 : work.cv_clock
     port map (
       clk_i         => clk_i,
-      clk_en_10m7_i => clk_en_5m3_i,
+      clk_en_10m7_i => clk_en_5m37_i,
       reset_n_i     => reset_n_s,
       clk_en_3m58_p_o => clk_en_1m79_p_s,
       clk_en_3m58_n_o => clk_en_1m79_n_s
     );
 
   -----------------------------------------------------------------------------
-  -- T80 CPU
+  -- Z80 CPU (t80sv_T80pa: T80pa in SystemVerilog, rtl/t80sv)
   -----------------------------------------------------------------------------
-  t80a_b : work.T80pa
+  t80a_b : t80sv_T80pa
     generic map (
       Mode       => 0
     )
@@ -335,9 +354,14 @@ begin
       RFSH_n     => rfsh_n_s,
       HALT_n     => open,
       BUSAK_n    => open,
+      OUT0       => '0',
       A          => a_s,
       DI         => d_to_cpu_s,
-      DO         => d_from_cpu_s
+      DO         => d_from_cpu_s,
+      R800_mode  => '0',
+      REG        => open,
+      DIRSet     => '0',
+      DIR        => (others => '0')
     );
 
 	 

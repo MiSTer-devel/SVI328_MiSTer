@@ -144,6 +144,7 @@ module vdp18_core
   logic              stop_sprite_s;
   logic              vert_active_s;
   logic              hor_active_s;
+  logic              hor_window_s, vert_window_s;
 
   logic              rd_s;
   logic              wr_s;
@@ -244,6 +245,8 @@ module vdp18_core
      .access_type_o(access_type_s),
      .vert_active_o(vert_active_s),
      .hor_active_o(hor_active_s),
+     .hor_window_o(hor_window_s),
+     .vert_window_o(vert_window_s),
      .irq_o(irq_s)
      );
 
@@ -377,6 +380,8 @@ module vdp18_core
      .reset_i(reset_s),
      .vert_active_i(vert_active_s),
      .hor_active_i(hor_active_s),
+     .hor_window_i(hor_window_s),
+     .vert_window_i(vert_window_s),
      .border_i(border_i),
      .blank_i(blank_s),
      .hblank_i(hblank_s),

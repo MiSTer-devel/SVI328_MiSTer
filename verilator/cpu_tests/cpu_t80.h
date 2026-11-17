@@ -1,17 +1,23 @@
-// T80pa adapter (rtl/T80, Mode 0, as instanced in rtl/cv_console.vhd), from the
-// GHDL --synth Verilog netlist gen/t80pa_synth.v. One T-state = one CLK with
-// CEN_p followed by one CLK with CEN_n, like clk_en_3m58_p/_n on hardware.
-// State is loaded with the core's own DIRSet/DIR port and read from REG; WZ
-// (not in DIR/REG) is poked/read through the netlist register named in gen/t80_wz.h.
+// T80pa adapter: t80sv_T80pa (rtl/t80sv, Mode 0, as instanced in rtl/cv_console.vhd),
+// through the wrapper T80pa_t80sv.sv. One T-state = one CLK with CEN_p followed by
+// one CLK with CEN_n, like clk_en_3m58_p/_n on hardware. State is loaded with the
+// core's own DIRSet/DIR port and read from REG; WZ and Fw (Q), which are not in
+// DIR/REG, are poked/read directly (t80sv_regs.h, t80sv.vlt).
 #pragma once
 #include "VT80pa.h"
 #include "VT80pa___024root.h"
 #include "harness.h"
-#include "t80_wz.h"  // #define T80_WZ(top) top->rootp->T80pa__DOT__u0__DOT__nNNNN
+#include "t80sv_regs.h"
 
 struct CpuT80 {
   static const char *name() { return "t80"; }
   static constexpr bool has_wz = true;
+#ifdef T80_QF
+  static constexpr bool has_q = true;
+#else
+  static constexpr bool has_q = false;
+#endif
+  int q_init = 0;
   static constexpr int clocks_per_t = 2;
   VT80pa *top;
   int wz_repoke = 0;
@@ -69,6 +75,10 @@ struct CpuT80 {
       T80_WZ(top) = r.wz;
       top->eval();
       wz_repoke = 1; wz_init = r.wz;
+      q_init = r.q != 0;
+#ifdef T80_QF
+      T80_QF(top) = q_init; top->eval();
+#endif
     }
   }
   void dump_reg(FILE *f) {
@@ -86,6 +96,9 @@ struct CpuT80 {
     r.ix = rp[3]; r.bc_ = rp[4]; r.de_ = rp[5]; r.hl_ = rp[6]; r.iy = rp[7];
     r.im = getbits(g, 208, 2); r.iff1 = getbits(g, 210, 1); r.iff2 = getbits(g, 211, 1);
     r.wz = T80_WZ(top);
+#ifdef T80_QF
+    r.q = T80_QF(top) ? r.f : 0;
+#endif
   }
   // outputs only change on CLK rising edges, so DI for the coming edge is computed from
   // the current pins; two evals per CLK
@@ -99,6 +112,9 @@ struct CpuT80 {
       // first fetch); it ends the dummy "instruction" IR=00, whose SetWZ executes WZ <= ID16.
       // Restore the test's WZ after it.
       wz_repoke = 0; T80_WZ(top) = wz_init; top->eval();
+#ifdef T80_QF
+      T80_QF(top) = q_init; top->eval();
+#endif
     }
     bus.clocked(p, pins());
     bus.sample(pins());

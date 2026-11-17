@@ -64,6 +64,8 @@ module vdp18_ctrl
     output access_t    access_type_o,
     output logic       vert_active_o,
     output logic       hor_active_o,
+    output logic       hor_window_o,   // picture window without border: 256 x 192
+    output logic       vert_window_o,  // in every mode, not cut by the blank bit
     output logic       irq_o
    );
 
@@ -85,6 +87,7 @@ module vdp18_ctrl
 
   logic                  vert_active_q;
   logic                  hor_active_q;
+  logic                  hor_window_q, vert_window_q;
   logic                  sprite_active_q;
   logic                  sprite_line_act_q;
 
@@ -227,6 +230,7 @@ module vdp18_ctrl
       if (reset_i)
         begin
           vert_active_q     <= '0;
+          vert_window_q     <= '0;
           sprite_active_q   <= '0;
           sprite_line_act_q <= '0;
         end
@@ -272,6 +276,12 @@ module vdp18_ctrl
                       sprite_line_act_q <= '0;
                     end
 
+                  // picture window (Border = No): lines 0-191 always
+                  if (num_line_i == -1)
+                    vert_window_q <= '1;
+                  else if (num_line_i == 191)
+                    vert_window_q <= '0;
+
                   // global vertical display
                   if (reg_blank_i)
                     vert_active_q <= '0;
@@ -303,12 +313,29 @@ module vdp18_ctrl
   always @(posedge clk_i, posedge reset_i )
     begin: hor_flags
       if (reset_i)
-        hor_active_q <= '0;
+        begin
+          hor_active_q <= '0;
+          hor_window_q <= '0;
+        end
 
       else
         begin
           if (clk_en_5m37_i)
             begin
+              // picture window (Border = No): 256 pixels in every mode, the
+              // 240 text-mode pixels (0-239) centred in it (the text-mode line
+              // counts -102..239, so the window runs -8..239, -102..-95)
+              if (opmode_i == OPMODE_TEXTM)
+                begin
+                  if (num_pix_i == -9)       hor_window_q <= '1;
+                  else if (num_pix_i == -95) hor_window_q <= '0;   // 239, then -102..-95
+                end
+              else
+                begin
+                  if (num_pix_i == -1)       hor_window_q <= '1;
+                  else if (num_pix_i == 255) hor_window_q <= '0;
+                end
+
               if ((~reg_blank_i) & num_pix_i == -1)
                 hor_active_q <= '1;
 
@@ -333,6 +360,8 @@ module vdp18_ctrl
   assign clk_en_acc_o = clk_en_5m37_i & num_pix_i[8];
   assign vert_active_o = vert_active_q;
   assign hor_active_o = hor_active_q;
+  assign hor_window_o = hor_window_q;
+  assign vert_window_o = vert_window_q;
   assign irq_o = vert_inc_i & (num_line_i == 191);
 
   function signed [0:8] mod_6_f;

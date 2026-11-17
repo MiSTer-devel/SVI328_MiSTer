@@ -11,6 +11,7 @@
 struct CpuTV80 {
   static const char *name() { return "tv80"; }
   static constexpr bool has_wz = false;  // TmpAddr is a scratch register, not MEMPTR
+  static constexpr bool has_q = false;
   static constexpr int clocks_per_t = 1;
   Vtv80e *top;
   CpuTV80() {

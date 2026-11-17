@@ -3,9 +3,9 @@
 // cv_bus_mux, 74ls74 M1 wait) for Verilator.
 //
 // Same structure and signal meaning as the VHDL the hardware build uses. The
-// differences are the CPU (tv80e instead of T80pa, as in ColecoAdam_MiSTer) and
-// the VDP (vdp18v, ColecoAdam's SystemVerilog TMS9918A with its accuracy fixes
-// and SVI's vsync change ported). Keep them in step with the VHDL until the
+// CPU is the same t80sv_T80pa as the hardware (rtl/t80sv; `make tv80` builds
+// with tv80e instead). The difference is the VDP (vdp18v, ColecoAdam's
+// SystemVerilog TMS9918A with its accuracy fixes and SVI's vsync change ported). Keep them in step with the VHDL until the
 // hardware build moves to these files.
 //-----------------------------------------------------------------------------
 
@@ -16,7 +16,7 @@ module svi_console #(
   input               clk_i,
   input               pal_i,            // 1 = PAL, 0 = NTSC (cv_console.vhd pal_i)
   input               clk_en_10m7_i,
-  input               clk_en_5m3_i,
+  input               clk_en_5m37_i,
   input               clk_en_cpu_p_i,   // Z80 enables from the top (turbo-capable)
   input               clk_en_cpu_n_i,
   input               reset_n_i,
@@ -108,24 +108,24 @@ module svi_console #(
   cv_por por_b (.clk_i(clk_i), .por_n_o(por_n_s));
   assign reset_n_s = por_n_s & reset_n_i;
 
-  // Clocks: Z80 enables from the top (cv_console.vhd: same), PSG enable = 5.3/3 --------------------------------
+  // Clocks: Z80 enables from the top (cv_console.vhd: same), PSG enable = 5.37/3 (cv_clock: ColecoVision port names) --------------------------------
   assign clk_en_3m58_p_s = clk_en_cpu_p_i;
   assign clk_en_3m58_n_s = clk_en_cpu_n_i;
   cv_clock clock_b2 (
-    .clk_i(clk_i), .clk_en_10m7_i(clk_en_5m3_i), .reset_n_i(reset_n_s),
+    .clk_i(clk_i), .clk_en_10m7_i(clk_en_5m37_i), .reset_n_i(reset_n_s),
     .clk_en_3m58_p_o(clk_en_1m79_p_s), .clk_en_3m58_n_o(clk_en_1m79_n_s));
 
   // CPU ---------------------------------------------------------------------
-`ifdef SIM_T80
-  // The hardware's CPU: T80pa (rtl/T80, Mode 0) as a GHDL netlist
-  // (cpu_tests/gen/t80pa_synth.v), with both clock phases as on hardware.
-  T80pa cpu (
+`ifndef SIM_TV80
+  // The hardware's CPU: t80sv_T80pa (rtl/t80sv, Mode 0), both clock phases as in cv_console.vhd
+  t80sv_T80pa #(.Mode(0)) cpu (
     .RESET_n(reset_n_s), .CLK(clk_i), .CEN_p(clk_en_3m58_p_s), .CEN_n(clk_en_3m58_n_s),
     .WAIT_n(wait_n_s & ext_wait_n_i & vdp_wait_n_s), .INT_n(int_n_s), .NMI_n(nmi_n_s), .BUSRQ_n(1'b1),
-    .OUT0(1'b0), .DI(d_to_cpu_s), .DIRSet(1'b0), .DIR(212'd0),
+    .OUT0(1'b0), .DI(d_to_cpu_s), .R800_mode(1'b0), .DIRSet(1'b0), .DIR(212'd0),
     .M1_n(m1_n_s), .MREQ_n(mreq_n_s), .IORQ_n(iorq_n_s), .RD_n(rd_n_s), .WR_n(wr_n_s),
     .RFSH_n(rfsh_n_s), .HALT_n(), .BUSAK_n(), .A(a_s), .DO(d_from_cpu_s), .REG());
 `else
+  // make tv80: tv80e (rtl_sv/tv80), one T-state per enabled clock
   tv80e cpu (
     .reset_n(reset_n_s), .clk(clk_i), .cen(clk_en_3m58_p_s),
     .wait_n(wait_n_s & ext_wait_n_i & vdp_wait_n_s), .int_n(int_n_s), .nmi_n(nmi_n_s), .busrq_n(1'b1),

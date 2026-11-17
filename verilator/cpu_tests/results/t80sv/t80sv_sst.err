@@ -1,0 +1,5 @@
+strobe offset IR: -1:15000
+strobe offset IW: -1:15000
+strobe offset MR: -1:2025774
+strobe offset MR(M1): -1:2956000
+strobe offset MW: +0:579080

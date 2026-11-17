@@ -35,10 +35,13 @@ static uint64_t cycles = 0;
 // ---------------------------------------------------------------- options
 static std::string rom_path = "../software/mister11/boot.rom";
 static std::string cart_path, tape_path, outdir = "out", wav_path, disk_path, charrom_path;
-static bool fdc_on = false, m806_on = false, show80 = false;
+static bool fdc_on = false, m806_on = false;
+static int display = 0;   // OSD Display: 0 Auto, 1 80-column, 2 VDP
 static int run_frames = 0, every = 0;
 static std::set<int> shots;
 static bool tape_turbo = false;
+static bool disp_log = false, prev_m806w = false;
+static unsigned vdp_wr = 0, m806_wr = 0;
 static bool tape_log = false, io_log = false, border = false, text_at_end = false, no_overlay = false, ntsc = false, model_318 = false, mem_std = false;
 static std::set<int> text_frames;
 static int stop_on_text_frame_check = 0;
@@ -312,6 +315,7 @@ static void usage() {
        "  --disk FILE              SV-801 on, FILE (.dsk, 172032 / 346112 bytes) in drive 0\n"
        "  --fdc                    SV-801 on, no disk\n"
        "  --80col / --show80       SV-806 on / and show its output (Display = 80-column)\n"
+       "  --display auto|80|vdp    OSD Display (default auto: the screen the software writes to)\n"
        "  --charrom FILE           SV-806 character ROM (boot1.rom; implies --80col)\n"
        "  --318                    OSD Model = SVI-318 (16 KB at C000-FFFF)\n"
        "  --mem-std                OSD Memory = Standard (no SV-807 banks)\n"
@@ -326,6 +330,7 @@ static void usage() {
        "  --tape-log              log motor on/off with CAS position and block numbers\n"
        "  --turbo                 OSD Tape speed = 4x (full-rate build only)\n"
        "  --io-log                log PPI port A (98h) reads per frame and PSG/PPI writes\n"
+       "  --disp-log              log VDP writes and SV-806 RAM writes per frame, port 58h writes\n"
        "  --profile N             sample the Z80 PC every N cycles, print the busiest at exit\n"
        "  --dump-ram FILE@FRAME   write the 256 KB SDRAM window at FRAME\n"
        "  --wav FILE              write audio as 44.1 kHz mono WAV\n"
@@ -386,6 +391,7 @@ int main(int argc, char** argv) {
       tape_turbo = true;
     }
     else if (a == "--io-log") io_log = true;
+    else if (a == "--disp-log") disp_log = true;
     else if (a == "--profile") profile_every = atoll(next());
     else if (a == "--dump-ram") { auto p = split_at(next()); dump_ram[p.second] = p.first; }
     else if (a == "--wav") wav_path = next();
@@ -397,7 +403,8 @@ int main(int argc, char** argv) {
     else if (a == "--disk") { disk_path = next(); fdc_on = true; }
     else if (a == "--fdc") fdc_on = true;
     else if (a == "--80col") m806_on = true;
-    else if (a == "--show80") { m806_on = true; show80 = true; }
+    else if (a == "--show80") { m806_on = true; display = 1; }
+    else if (a == "--display") { std::string d = next(); display = d == "80" ? 1 : d == "vdp" ? 2 : 0; }
     else if (a == "--charrom") { charrom_path = next(); m806_on = true; }
     else { fprintf(stderr, "unknown option %s\n", a.c_str()); usage(); return 1; }
   }
@@ -413,7 +420,7 @@ int main(int argc, char** argv) {
   top->mem_std = mem_std;
   top->fdc_on = fdc_on;
   top->m806_on = m806_on;
-  top->show80 = show80;
+  top->display = display;
   top->sd_ack = 0; top->sd_buff_wr = 0; top->img_mounted = 0; top->img_readonly = 0;
   top->tape_turbo = tape_turbo;
   top->reset = 1; top->ps2_key = 0; top->joy0 = 0; top->joy1 = 0;
@@ -487,6 +494,10 @@ int main(int argc, char** argv) {
       if (port == 0x98 && !top->cpu_rd_n) {
         ppi_a_reads++;
       }
+      if (disp_log && !top->cpu_wr_n) {
+        if ((port & 0xFE) == 0x80) vdp_wr++;
+        if (port == 0x58) printf("f%d io W 58 <- %02X\n", frame, top->cpu_dout);
+      }
       if (io_log && !top->cpu_wr_n && (port == 0x88 || port == 0x8C || port == 0x97))
         printf("f%d io W %02X <- %02X\n", frame, port, top->cpu_dout);
     }
@@ -496,15 +507,16 @@ int main(int argc, char** argv) {
       if ((last_seen & 0x10) == 0) ppi_a_zero_fire++;
     }
     prev_io = io;
+    { bool w = top->m806_vram_wr; if (w && !prev_m806w) m806_wr++; prev_m806w = w; }
 
-#ifdef SIM_T80
-    // no PC register to peek at in the netlist: sample the opcode fetch address
+#ifdef SIM_TV80
+    if (profile_every && cycles % profile_every == 0)
+      pc_hist[top->rootp->svi_sim->console__DOT__cpu__DOT__i_tv80_core__DOT__PC]++;
+#else
+    // the PC of an instruction is its opcode fetch address
     { static uint64_t next_sample = 0;
       if (profile_every && cycles >= next_sample && !top->cpu_m1_n && top->cpu_iorq_n) {
         pc_hist[top->cpu_a]++; next_sample = cycles + profile_every; } }
-#else
-    if (profile_every && cycles % profile_every == 0)
-      pc_hist[top->rootp->svi_sim->console__DOT__cpu__DOT__i_tv80_core__DOT__PC]++;
 #endif
 
     if (wav) { wav_acc += 44100; if (wav_acc >= CLK_HZ) { wav_acc -= CLK_HZ;
@@ -541,6 +553,8 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 262144; i++) fputc(top->rootp->svi_sim->sdram[i], f);
         fclose(f); printf("f%d dumped SDRAM to %s\n", frame, dump_ram[frame].c_str());
       }
+      if (disp_log && (vdp_wr || m806_wr)) printf("f%d vdp writes=%u 806 ram writes=%u\n", frame, vdp_wr, m806_wr);
+      vdp_wr = m806_wr = 0;
       if (io_log) { printf("f%d ppiA reads=%u fire1_low=%u\n", frame, ppi_a_reads, ppi_a_zero_fire); }
       ppi_a_reads = 0; ppi_a_zero_fire = 0;
 

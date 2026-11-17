@@ -148,6 +148,8 @@ architecture struct of vdp18_core is
   signal stop_sprite_s    : boolean;
   signal vert_active_s,
          hor_active_s     : boolean;
+  signal vert_window_s,
+         hor_window_s     : boolean;
 
   signal rd_s,
          wr_s             : boolean;
@@ -252,6 +254,8 @@ begin
       access_type_o => access_type_s,
       vert_active_o => vert_active_s,
       hor_active_o  => hor_active_s,
+      hor_window_o  => hor_window_s,
+      vert_window_o => vert_window_s,
       irq_o         => irq_s
     );
 
@@ -389,6 +393,8 @@ begin
       reset_i       => reset_s,
       vert_active_i => vert_active_s,
       hor_active_i  => hor_active_s,
+      hor_window_i  => hor_window_s,
+      vert_window_i => vert_window_s,
       border_i      => border_i,
       blank_i       => blank_s,
       hblank_i      => hblank_s,

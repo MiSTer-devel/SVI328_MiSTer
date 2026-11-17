@@ -39,10 +39,10 @@ static long max_t = 400;
 // ---------------------------------------------------------------------------------------------
 enum Field {
   F_PC, F_SP, F_A, F_FDOC, F_FXY, F_B, F_C, F_D, F_E, F_H, F_L, F_I, F_R, F_IX, F_IY,
-  F_AF_, F_BC_, F_DE_, F_HL_, F_IM, F_IFF1, F_IFF2, F_WZ, F_RAM, F_CYC, F_BUS, F_BUST, F_PORT, F_N
+  F_AF_, F_BC_, F_DE_, F_HL_, F_IM, F_IFF1, F_IFF2, F_WZ, F_Q, F_RAM, F_CYC, F_BUS, F_BUST, F_PORT, F_N
 };
 static const char *fname[F_N] = {"pc", "sp", "a", "f", "f53", "b", "c", "d", "e", "h", "l", "i", "r",
-                                 "ix", "iy", "af_", "bc_", "de_", "hl_", "im", "iff1", "iff2", "wz",
+                                 "ix", "iy", "af_", "bc_", "de_", "hl_", "im", "iff1", "iff2", "wz", "q",
                                  "ram", "cycles", "bus", "bustime", "ports"};
 
 struct Test {
@@ -188,6 +188,7 @@ static void run_sst_file(const char *path, std::map<std::string, Delta> &deltas)
       chk(F_BC_, e.bc_, got.bc_, 4); chk(F_DE_, e.de_, got.de_, 4); chk(F_HL_, e.hl_, got.hl_, 4);
       chk(F_IM, e.im, got.im, 1); chk(F_IFF1, e.iff1, got.iff1, 1); chk(F_IFF2, e.iff2, got.iff2, 1);
       if (Cpu::has_wz) chk(F_WZ, e.wz, got.wz, 4);
+      if (Cpu::has_q) chk(F_Q, e.q, got.q, 2);
       for (auto &p : t.ram1)
         if (bus->mem[p.first] != p.second && !bad[F_RAM]) {
           bad[F_RAM] = 1;
@@ -245,7 +246,7 @@ static void run_sst_file(const char *path, std::map<std::string, Delta> &deltas)
     for (int k = 0; k < F_N; k++)
       if (bad[k]) {
         any = true;
-        if (k != F_FXY && k != F_WZ && k != F_BUST) doc = true;
+        if (k != F_FXY && k != F_WZ && k != F_Q && k != F_BUST) doc = true;
         if (!count[k]++) example[k] = t.name + ": " + detail[k];
       }
     if (!any) npass++;

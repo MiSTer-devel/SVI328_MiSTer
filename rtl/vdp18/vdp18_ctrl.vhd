@@ -69,6 +69,8 @@ entity vdp18_ctrl is
     access_type_o : out access_t;
     vert_active_o : out boolean;
     hor_active_o  : out boolean;
+    hor_window_o  : out boolean;   -- the picture window without border:
+    vert_window_o : out boolean;   -- 256 x 192, whatever the mode and blank bit
     irq_o         : out boolean
   );
 
@@ -99,6 +101,8 @@ architecture rtl of vdp18_ctrl is
 
   signal vert_active_q,
          hor_active_q      : boolean;
+  signal vert_window_q,
+         hor_window_q      : boolean;
   signal sprite_active_q   : boolean;
   signal sprite_line_act_q : boolean;
 
@@ -266,6 +270,7 @@ begin
   begin
     if reset_i then
       vert_active_q     <= false;
+      vert_window_q     <= false;
       sprite_active_q   <= false;
       sprite_line_act_q <= false;
 
@@ -303,6 +308,13 @@ begin
             sprite_line_act_q <= false;
           end if;
 
+          -- picture window (Border = No): lines 0-191 always
+          if    num_line_i = -1 then
+            vert_window_q <= true;
+          elsif num_line_i = 191 then
+            vert_window_q <= false;
+          end if;
+
           -- global vertical display
           if    reg_blank_i then
             vert_active_q <= false;
@@ -337,9 +349,24 @@ begin
   begin
     if reset_i then
       hor_active_q     <= false;
+      hor_window_q     <= false;
 
     elsif clk_i'event and clk_i = '1' then
       if clk_en_5m37_i then
+        -- picture window (Border = No): 256 pixels in every mode, not cut by
+        -- the blank bit, so the scaler always gets the same picture size. The
+        -- 240 text-mode pixels (0-239) are centred in it: a text-mode line
+        -- counts -102..239, so the window runs -8..239, then -102..-95.
+        if opmode_i = OPMODE_TEXTM then
+          if    num_pix_i = -9  then hor_window_q <= true;
+          elsif num_pix_i = -95 then hor_window_q <= false;   -- 239, then -102..-95
+          end if;
+        else
+          if    num_pix_i = -1  then hor_window_q <= true;
+          elsif num_pix_i = 255 then hor_window_q <= false;
+          end if;
+        end if;
+
         if not reg_blank_i and
            num_pix_i = -1  then
           hor_active_q <= true;
@@ -369,6 +396,8 @@ begin
   access_type_o <= access_type_s;
   vert_active_o <= vert_active_q;
   hor_active_o  <= hor_active_q;
+  hor_window_o  <= hor_window_q;
+  vert_window_o <= vert_window_q;
   irq_o         <= vert_inc_i and num_line_i = 191;
 
 end rtl;

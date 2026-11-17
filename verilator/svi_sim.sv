@@ -4,7 +4,7 @@
 // Clocking, two builds:
 //   make       (FULL=0, obj_dir/)  sim clock = the 10.7 MHz rate (hardware: clk_sys
 //              42.954545 MHz with ce_10m7 = /4), ce_10m7 = 1. The cassette player
-//              steps on Q edges (hardware: ce_21m3, 21.477 MHz); here 5.369 MHz,
+//              steps on Q edges (hardware: ce_21m48, 21.477 MHz); here 5.369 MHz,
 //              so gen/square_gen.v has STP x4. Same bit timing. No turbo. ~4x faster.
 //   make full  (FULL=1, obj_full/) sim clock = clk_sys, with Svi328.sv's clock
 //              enables, CPU enable generator and tape turbo, and rtl/square_gen.v.
@@ -35,7 +35,7 @@ module svi_sim #(
   input               mem_std,       // OSD Memory = Standard (no SV-807)
   input               fdc_on,        // OSD SV-801 disk = On
   input               m806_on,       // OSD SV-806 80-column = On
-  input               show80,        // OSD Display = 80-column
+  input       [1:0]   display,       // OSD Display: 0 Auto, 1 80-column, 2 VDP
   // SD (hps_io) for the SV-801's image
   input               img_mounted,
   input               img_readonly,
@@ -67,6 +67,7 @@ module svi_sim #(
   output              cpu_wr_n,
   output     [7:0]    cpu_din,
   output     [7:0]    cpu_dout,
+  output              m806_vram_wr,  // debug: CPU write to SV-806 display RAM
   output     [7:0]    ppi_portc,
   output     [7:0]    psg_port_b
 );
@@ -78,18 +79,18 @@ module svi_sim #(
   wire       iorq_n, m1_n;
   wire [7:0] fdc_dout, m806_dout;
   wire       fdc_dout_en, m806_dout_en, m806_wait;
-  reg  ce_10m7 = 1'b0, ce_5m3 = 1'b0, cas_q = 1'b0;
+  reg  ce_10m7 = 1'b0, ce_5m37 = 1'b0, cas_q = 1'b0;
   reg  ce_cpu_p = 1'b0, ce_cpu_n = 1'b0;
   wire turbo_active;
   wire [2:0] CAS_status;   // cassette.v state (5 = ENDED)
 
   generate if (FULL) begin : g_full
-    // exactly Svi328.sv: ce_10m7 = /4, ce_5m3 = /8, ce_21m3 = div[0]
+    // exactly Svi328.sv: ce_10m7 = /4, ce_5m37 = /8, ce_21m48 = div[0]
     reg [2:0] div = 3'd0;
     always @(posedge clk) begin
       div     <= div + 1'd1;
       ce_10m7 <= !div[1:0];
-      ce_5m3  <= !div[2:0];
+      ce_5m37  <= !div[2:0];
       cas_q   <= div[0];
     end
     reg turbo_sel = 1'b0, motor_r = 1'b1;
@@ -113,11 +114,11 @@ module svi_sim #(
       end
     end
   end else begin : g_fast
-    // clk = the 10.7 MHz rate: ce_10m7 = 1, ce_5m3 = /2, Z80 = /3 (cv_clock), cassette Q
+    // clk = the 10.7 MHz rate: ce_10m7 = 1, ce_5m37 = /2, Z80 = /3 (cv_clock), cassette Q
     // at clk/2 with square_gen's STP x4 (gen/square_gen.v). No turbo.
     always @(posedge clk) begin
       ce_10m7 <= 1'b1;
-      ce_5m3  <= ~ce_5m3;
+      ce_5m37  <= ~ce_5m37;
       cas_q   <= ~cas_q;
     end
     reg [1:0] cnt = 2'd0;
@@ -126,13 +127,13 @@ module svi_sim #(
     assign turbo_active = 1'b0;
   end endgenerate
 
-  // FDC timebase: ce_5m3 / 3 (Svi328.sv ce_1m79). SV-806 dots: 12 MHz on
+  // FDC timebase: ce_5m37 / 3 (Svi328.sv ce_1m79). SV-806 dots: 12 MHz on
   // average (Svi328.sv ce_12m); the fast build has no 12 MHz, so 10.7 there.
   reg ce_1m79 = 1'b0, ce_12m = 1'b0;
   reg [1:0] d3 = 2'd0;
   always @(posedge clk) begin
     ce_1m79 <= 1'b0;
-    if (ce_5m3) begin d3 <= (d3 == 2'd2) ? 2'd0 : d3 + 2'd1; ce_1m79 <= (d3 == 2'd0); end
+    if (ce_5m37) begin d3 <= (d3 == 2'd2) ? 2'd0 : d3 + 2'd1; ce_1m79 <= (d3 == 2'd0); end
   end
   generate if (FULL) begin : g_12m
     reg [26:0] acc = 27'd0;
@@ -142,7 +143,15 @@ module svi_sim #(
   end else begin : g_12m_fast
     always @(posedge clk) ce_12m <= 1'b1;
   end endgenerate
-  assign ce_pix = (m806_on & show80) ? ce_12m : ce_5m3;
+  // Display (Svi328.sv show80): Auto follows the screen the software writes to
+  // (rtl/sv806/sv806_auto.sv; 0.2 s hold at either sim clock rate)
+  wire auto80;
+  sv806_auto #(.HOLD(FULL ? 23 : 21)) sv806_auto (.clk(clk), .reset(reset), .enable(m806_on),
+    .m806_wr(m806_ramdis & ~ram_we_n),
+    .vdp_wr(~iorq_n & m1_n & ~ram_we_n & ram_a16[7:6] == 2'b10 & ram_a16[4:2] == 3'b000),
+    .show80(auto80));
+  wire on80 = m806_on & ((display == 2'd1) | ((display == 2'd0) & auto80));
+  assign ce_pix = on80 ? ce_12m : ce_5m37;
 
   // Keyboard ------------------------------------------------------------------
   wire [3:0] svi_row;
@@ -226,7 +235,7 @@ module svi_sim #(
   // Machine -------------------------------------------------------------------
   wire hsync_n, vsync_n;
   svi_console #(.is_pal_g(1)) console (
-    .clk_i(clk), .pal_i(~ntsc), .clk_en_10m7_i(ce_10m7), .clk_en_5m3_i(ce_5m3),
+    .clk_i(clk), .pal_i(~ntsc), .clk_en_10m7_i(ce_10m7), .clk_en_5m37_i(ce_5m37),
     .clk_en_cpu_p_i(ce_cpu_p), .clk_en_cpu_n_i(ce_cpu_n), .reset_n_i(~reset),
     .svi_row_o(svi_row), .svi_col_i(svi_col),
     .svi_tap_i(svi_audio_in), .tape_ready_n_i(~tape_loaded), .motor_o(motor_n),
@@ -271,7 +280,7 @@ module svi_sim #(
     .hint_show(hint_show & tape_loaded & ~cas_dl), .hint_len(hint_len), .hint_text(hint_text),
     .status(ts_word), .req(ts_req), .ack(ts_ack));
   svi_tape_overlay #(.FACTOR(4'd4)) tape_overlay (
-    .clk(clk), .ce_pix(ce_5m3), .hblank(vHB), .vblank(vVB), .enable(~overlay_off),
+    .clk(clk), .ce_pix(ce_5m37), .hblank(vHB), .vblank(vVB), .enable(~overlay_off),
     .status(ts_word), .req(ts_req), .ack(ts_ack),
     .rgb_in({vR, vG, vB}), .rgb_out({oR, oG, oB}));
 
@@ -301,7 +310,6 @@ module svi_sim #(
     if (m806_de) begin m806_line_de <= 1'b1; m806_vb <= 1'b0; end
     if (m806_hs & ~m806_hs_r) begin if (~m806_line_de) m806_vb <= 1'b1; m806_line_de <= 1'b0; end
   end
-  wire on80 = m806_on & show80;
   wire px80 = m806_de & m806_video;
   assign R = on80 ? (px80 ? 8'h33 : 8'h00) : oR;
   assign G = on80 ? (px80 ? 8'hFF : 8'h00) : oG;
@@ -309,13 +317,14 @@ module svi_sim #(
   assign HBlank = on80 ? ~m806_de : vHB;
   assign VBlank = on80 ? (m806_vb & ~m806_de) : vVB;
 
-  assign HSync      = (m806_on & show80) ? m806_hs : ~hsync_n;
-  assign VSync      = (m806_on & show80) ? m806_vs : ~vsync_n;
+  assign HSync      = on80 ? m806_hs : ~hsync_n;
+  assign VSync      = on80 ? m806_vs : ~vsync_n;
   assign motor      = ~motor_n;   // 1 = motor on
   assign turbo      = turbo_active;
   assign cas_addr   = CAS_addr;
   assign cas_dout   = CAS_dout;
   assign cas_status = CAS_status;
+  assign m806_vram_wr = m806_ramdis & ~ram_we_n;
   assign cpu_a      = ram_a16;
   assign psg_port_b = ay_port_b;
 

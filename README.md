@@ -13,7 +13,8 @@ SV-806 80-column card, place its 4 KB character ROM (`svi806.rom`, MAME
 |---|---|---|
 | Cartridge | top | a cartridge image (`.bin` / `.rom`, up to 64 KB) |
 | Tape | top | a `.cas` tape image (hidden when Tape input = ADC) |
-| Disk | top | a `.dsk` disk image for the SV-801 (shown when SV-801 disk = On) |
+| Tape save | top | a `.cas` file that CSAVE / BSAVE"CAS:" / SAVE"CAS:" record into (see Saving to tape) |
+| Disk A, Disk B | top | `.dsk` disk images for the SV-801's two drives (shown when SV-801 disk = On) |
 | Load ROM | top | another BASIC ROM for this session |
 | Memory | top | `SV-807 (160K)` (default): banks 21, 22, 31 and 32 present, as with the SV-807 RAM expansion; `Standard`: the machine alone |
 | Model | Machine | `SVI-328` (64 KB) or `SVI-318` (16 KB at C000-FFFF) |
@@ -88,6 +89,22 @@ draws correctly. The setting is taken each time the motor starts.
 
 Mounting a tape rewinds it; a reset also rewinds it.
 
+## Saving to tape
+
+Mount a `.cas` file in **Tape save** and the deck is ready to record:
+`CSAVE"NAME"`, `BSAVE"CAS:NAME",start,end` and `SAVE"CAS:NAME"` write into it
+from the start of the file, one block after another as on a real tape, until
+the file is full. The recorder reads the tape output (PPI C5), measures every
+half cycle in Z80 clocks (so 4x turbo makes no difference), and writes the
+blocks as CAS (16 x 55h + 7Fh, then the bytes): the same file plays back in
+the **Tape** slot with CLOAD / BLOAD / RUN.
+
+MiSTer can't make a mounted file bigger, so the file has to be big enough
+already: `releases/blank_tape_64k.cas` (64 KB of zeros, copy and rename it
+for each tape). What the recording doesn't reach stays zeros. The user LED is
+on while a block is being written and blinks when the file is full. Mounting
+the file again starts from the beginning.
+
 ## Keyboard
 
 The keys map by position, except where noted:
@@ -110,6 +127,13 @@ Load a cartridge in the **Cartridge** slot; the machine resets into it.
 **Eject cartridge** takes it out and resets into BASIC. Cartridge space
 that the image doesn't fill reads FF.
 
+Images over 64 KB (up to 1 MB) are megaROMs as in teiram's Calypso port of
+this core: the cartridge bank shows one 16 KB page of the image (mirrored
+over the whole bank), and a timer moves it to the next page 8 times a second,
+whatever the program does, wrapping after the last page of the image (the
+Calypso port always cycles 64 pages; the same for a 1 MB image). The image is
+kept in SDRAM and the page being shown in block RAM, so the CPU never waits.
+
 ## Disks (SV-801)
 
 **SV-801 disk** is `On` by default: mount a `.dsk` in **Disk** and reset
@@ -118,7 +142,10 @@ disk, BASIC starts about 1.4 s later than with the controller `Off`, while the
 BIOS looks for a disk. Images are the raw
 format MAME uses (`svi_dsk`): 172032 bytes single-sided or 346112 bytes
 double-sided, 40 tracks, track 0 side 0 with 18 x 128-byte sectors and every
-other track 17 x 256. One drive (A:). `.imd` images have to be converted first.
+other track 17 x 256. Two drives, A: (**Disk A**) and B: (**Disk B**), each with
+its own FD1793 replica; the CPU talks to the one selected at port 34h, as the
+card's single FD1793 talks to the selected drive. `.imd` images have to be
+converted first.
 
 The controller is an FD1793 at ports 30h-34h and 38h, as the SV-801. Its
 FD1793 is Sorgelig's wd1793 with the SVI geometry added in teiram's Calypso
@@ -162,3 +189,8 @@ until the BIOS makes it an output, as the AY's pull-ups do.
 
 `verilator/` holds a Verilator simulator of the core for development; see
 `verilator/README.md`.
+
+## Credits
+
+Second drive, tape saving and megaROM support by Shaeon (Carlos Palmero),
+developed with the help of Claude (Anthropic).

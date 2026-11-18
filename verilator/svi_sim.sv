@@ -18,7 +18,7 @@ module svi_sim #(
   // preload (like ioctl): target 0 = SDRAM (boot ROM at 00000, cart at 10000), 1 = CAS buffer
   input               dl_busy,       // ioctl_download
   input               dl_wr,
-  input      [1:0]    dl_target,     // 0 CPU memory, 1 CAS, 2 SV-806 character ROM (boot1.rom)
+  input      [1:0]    dl_target,     // 0 CPU memory, 1 CAS, 2 SV-806 character ROM (boot1.rom), 3 cartridge (ioctl index 1)
   input      [24:0]   dl_addr,
   input      [7:0]    dl_data,
   input      [24:0]   tape_end,
@@ -36,18 +36,27 @@ module svi_sim #(
   input               fdc_on,        // OSD SV-801 disk = On
   input               m806_on,       // OSD SV-806 80-column = On
   input       [1:0]   display,       // OSD Display: 0 Auto, 1 80-column, 2 VDP
-  // SD (hps_io) for the SV-801's image
-  input               img_mounted,
+  // SD (hps_io): VD 0 / 1 = SV-801 drives A: / B:, VD 2 = Tape save
+  input      [2:0]    img_mounted,
   input               img_readonly,
   input      [31:0]   img_size,
-  output     [31:0]   sd_lba,
-  output              sd_rd,
-  output              sd_wr,
-  input               sd_ack,
+  output     [31:0]   sd_lba0,
+  output     [31:0]   sd_lba1,
+  output     [31:0]   sd_lba2,
+  output     [2:0]    sd_rd,
+  output     [2:0]    sd_wr,
+  input      [2:0]    sd_ack,
   input      [8:0]    sd_buff_addr,
   input      [7:0]    sd_buff_dout,
-  output     [7:0]    sd_buff_din,
+  output     [7:0]    sd_buff_din0,
+  output     [7:0]    sd_buff_din1,
+  output     [7:0]    sd_buff_din2,
   input               sd_buff_wr,
+  output              rec_active,
+  output              rec_busy,
+  output              rec_full,
+  output     [24:0]   rec_length,
+  output              mega_on,
 
   output     [7:0]    R, G, B,
   output              HSync, VSync, HBlank, VBlank,
@@ -172,8 +181,12 @@ module svi_sim #(
   wire        open_bus;
   reg         cart_loaded = 1'b0;
   reg  [15:0] cart_last = 16'd0;
+  wire dl_cart = dl_target == 2'd3;
   always @(posedge clk)
-    if (dl_wr && dl_target == 2'd0 && dl_addr[16]) begin cart_loaded <= 1'b1; cart_last <= dl_addr[15:0]; end
+    if (dl_wr && ((dl_target == 2'd0 && dl_addr[16]) || dl_cart)) begin
+      cart_loaded <= 1'b1;
+      cart_last   <= (dl_cart && |dl_addr[24:16]) ? 16'hFFFF : dl_addr[15:0];   // Svi328.sv
+    end
   svi_mapper mapper (.addr_i(ram_a16), .RegMap_i(ay_port_b), .cart_loaded(cart_loaded),
                      .cart_last(cart_last),
                      .model_318(model_318), .expanded(~mem_std), .addr_o(ram_a), .ram(is_ram), .open_bus(open_bus));
@@ -181,6 +194,7 @@ module svi_sim #(
   reg  [7:0] ram_di;
   always @(posedge clk) begin
     if (dl_wr && dl_target == 2'd0) sdram[dl_addr[17:0]] <= dl_data;
+    else if (dl_wr && dl_cart && ~|dl_addr[24:16]) sdram[{2'b01, dl_addr[15:0]}] <= dl_data;
     else if (is_ram && !m806_ramdis && !(ram_we_n | ram_ce_n)) sdram[ram_a] <= ram_do;
     ram_di <= sdram[ram_a];
   end
@@ -196,30 +210,54 @@ module svi_sim #(
     if (vram_we) begin vram[vram_a] <= vram_do; vram_di <= vram_do; end
   end
 
-  // Cassette (Svi328.sv "OSD CAS load") --------------------------------------
-  // Tape buffer: SDRAM in hardware (sdram.sv). Modelled as its handshake: a
-  // rising edge of rd drops ready; ready rises again one clock before the data,
-  // 8 clocks later, or 16 every fourth read (a refresh in the way).
+  // SDRAM (Svi328.sv): the tape image, and the cartridge at 1000000h for the
+  // megaROM pages, read through svi_sdram_arb. Modelled as sdram.sv's
+  // handshake: a rising edge of rd drops ready; ready rises again one clock
+  // before the data, 8 clocks later, or 16 every fourth read (a refresh).
   reg  [7:0] cas_ram [0:(1<<CAS_AW)-1];
+  reg  [7:0] mega_ram [0:1048575];
   wire [24:0] CAS_addr, CAS_rd_addr;
   wire        CAS_rd;
-  reg  [7:0]  CAS_di;
-  reg         cas_ready = 1'b1, cas_rd_r = 1'b0;
-  reg  [4:0]  cas_cnt = 5'd0;
-  reg  [1:0]  cas_nth = 2'd0;
+  wire [7:0]  CAS_di;
+  wire        cas_ready;
+  wire        sdr_rd;
+  wire [24:0] sdr_addr;
+  reg  [7:0]  sdr_dout;
+  reg         sdr_ready = 1'b1, sdr_rd_r = 1'b0;
+  reg  [4:0]  sdr_cnt = 5'd0;
+  reg  [1:0]  sdr_nth = 2'd0;
+  wire        sdram_dl = dl_busy && (dl_target == 2'd1 || dl_cart);
   always @(posedge clk) begin
     if (dl_wr && dl_target == 2'd1) cas_ram[dl_addr[CAS_AW-1:0]] <= dl_data;
-    cas_rd_r <= CAS_rd;
-    if (CAS_rd && !cas_rd_r) begin
-      cas_ready <= 1'b0;
-      cas_cnt   <= (cas_nth == 0) ? 5'd16 : 5'd8;
-      cas_nth   <= cas_nth + 1'd1;
-    end else if (cas_cnt != 0) begin
-      cas_cnt <= cas_cnt - 1'd1;
-      if (cas_cnt == 2) cas_ready <= 1'b1;
-      if (cas_cnt == 1) CAS_di <= cas_ram[CAS_rd_addr[CAS_AW-1:0]];
+    if (dl_wr && dl_cart && ~|dl_addr[24:20]) mega_ram[dl_addr[19:0]] <= dl_data;
+    sdr_rd_r <= sdr_rd;
+    if (sdr_rd && !sdr_rd_r) begin
+      sdr_ready <= 1'b0;
+      sdr_cnt   <= (sdr_nth == 0) ? 5'd16 : 5'd8;
+      sdr_nth   <= sdr_nth + 1'd1;
+    end else if (sdr_cnt != 0) begin
+      sdr_cnt <= sdr_cnt - 1'd1;
+      if (sdr_cnt == 2) sdr_ready <= 1'b1;
+      if (sdr_cnt == 1) sdr_dout <= sdr_addr[24] ? mega_ram[sdr_addr[19:0]] : cas_ram[sdr_addr[CAS_AW-1:0]];
     end
   end
+
+  wire        mega_req, mega_ack;
+  wire [24:0] mega_addr;
+  wire  [7:0] mega_data, mega_q;
+  svi_sdram_arb sdram_arb (
+    .clk(clk), .hold(sdram_dl),
+    .cas_rd(CAS_rd), .cas_addr(CAS_rd_addr), .cas_data(CAS_di), .cas_ready(cas_ready),
+    .mr_req(mega_req), .mr_addr(mega_addr), .mr_ack(mega_ack), .mr_data(mega_data),
+    .rd(sdr_rd), .addr(sdr_addr), .dout(sdr_dout), .ready(sdr_ready));
+
+  // megaROM (ce_5m37 is the 5.37 MHz rate in both builds: 8 Hz pages)
+  svi_megarom megarom (
+    .clk(clk), .ce_5m37(ce_5m37),
+    .dl(dl_busy && dl_cart), .dl_wr(dl_wr && dl_cart), .dl_addr(dl_addr), .dl_data(dl_data),
+    .eject(1'b0), .active(mega_on),
+    .rd_req(mega_req), .rd_addr(mega_addr), .rd_ack(mega_ack), .rd_data(mega_data),
+    .cpu_a(ram_a[13:0]), .cpu_q(mega_q));
 
   wire CAS_dout, CAS_tick;
   cassette CASReader (
@@ -238,11 +276,11 @@ module svi_sim #(
     .clk_i(clk), .pal_i(~ntsc), .clk_en_10m7_i(ce_10m7), .clk_en_5m37_i(ce_5m37),
     .clk_en_cpu_p_i(ce_cpu_p), .clk_en_cpu_n_i(ce_cpu_n), .reset_n_i(~reset),
     .svi_row_o(svi_row), .svi_col_i(svi_col),
-    .svi_tap_i(svi_audio_in), .tape_ready_n_i(~tape_loaded), .motor_o(motor_n),
+    .svi_tap_i(svi_audio_in), .tape_ready_n_i(~(tape_loaded | rec_active)), .motor_o(motor_n),
     .joy0_i(~{joy0[4], joy0[0], joy0[1], joy0[2], joy0[3]}),
     .joy1_i(~{joy1[4], joy1[0], joy1[1], joy1[2], joy1[3]}),
     .cpu_ram_a_o(ram_a16), .cpu_ram_ce_n_o(ram_ce_n), .cpu_ram_rd_n_o(ram_rd_n),
-    .cpu_ram_we_n_o(ram_we_n), .cpu_ram_d_i(open_bus ? 8'hFF : ram_di), .cpu_ram_d_o(ram_do),
+    .cpu_ram_we_n_o(ram_we_n), .cpu_ram_d_i(open_bus ? 8'hFF : (mega_on && ram_a[17:16] == 2'b01) ? mega_q : ram_di), .cpu_ram_d_o(ram_do),
     .ay_port_b(ay_port_b),
     .cpu_iorq_n_o(iorq_n), .cpu_m1_n_o(m1_n),
     .ext_d_en_i(fdc_dout_en | m806_dout_en), .ext_d_i(fdc_dout_en ? fdc_dout : m806_dout),
@@ -289,10 +327,18 @@ module svi_sim #(
     .clk(clk), .ce(ce_1m79), .reset(reset), .enable(fdc_on),
     .iorq(~iorq_n & m1_n), .rd(~ram_rd_n), .wr(~ram_we_n), .addr(ram_a16[7:0]),
     .din(ram_do), .dout(fdc_dout), .dout_en(fdc_dout_en),
-    .img_mounted(img_mounted), .img_readonly(img_readonly), .img_size({32'd0, img_size}),
-    .sd_lba(sd_lba), .sd_rd(sd_rd), .sd_wr(sd_wr), .sd_ack(sd_ack),
-    .sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout), .sd_buff_din(sd_buff_din),
+    .img_mounted(img_mounted[1:0]), .img_readonly(img_readonly), .img_size({32'd0, img_size}),
+    .sd_lba0(sd_lba0), .sd_lba1(sd_lba1), .sd_rd(sd_rd[1:0]), .sd_wr(sd_wr[1:0]), .sd_ack(sd_ack[1:0]),
+    .sd_buff_addr(sd_buff_addr), .sd_buff_dout(sd_buff_dout),
+    .sd_buff_din0(sd_buff_din0), .sd_buff_din1(sd_buff_din1),
     .sd_buff_wr(sd_buff_wr), .led());
+  // Tape save (Svi328.sv tape_rec): PPI C5 timed in Z80 clocks
+  tape_rec tape_rec (
+    .clk(clk), .ce_cpu(ce_cpu_p), .cas_out(ppi_portc[5]), .motor_on(~motor_n),
+    .img_mounted(img_mounted[2]), .img_readonly(img_readonly), .img_size({32'd0, img_size}),
+    .sd_lba(sd_lba2), .sd_rd(sd_rd[2]), .sd_wr(sd_wr[2]), .sd_ack(sd_ack[2]),
+    .sd_buff_addr(sd_buff_addr), .sd_buff_din(sd_buff_din2),
+    .active(rec_active), .recording(rec_busy), .full(rec_full), .length(rec_length));
   wire m806_video, m806_hs, m806_vs, m806_de;
   sv806 sv806 (
     .clk(clk), .cpu_ce(ce_cpu_p), .pix_ce(ce_12m), .reset(reset), .enable(m806_on),

@@ -53,7 +53,6 @@ assign {UART_RTS, UART_TXD, UART_DTR} = 0;
 assign {SD_SCK, SD_MOSI, SD_CS} = 'Z;
 assign {DDRAM_CLK, DDRAM_BURSTCNT, DDRAM_ADDR, DDRAM_DIN, DDRAM_BE, DDRAM_RD, DDRAM_WE} = 0;
  
-assign LED_USER   = ioctl_download;
 assign LED_POWER  = 0;
 assign BUTTONS    = 0;
 assign VGA_SCALER = 0;
@@ -64,6 +63,13 @@ assign HDMI_BOB_DEINT = 0;
 
 
 wire [127:0] status;
+
+// megaROM and tape save (declared here: used above their sections)
+wire        mega_on;
+wire  [7:0] mega_q;
+wire        cas_out;
+wire        rec_active, rec_busy, rec_full, rec_led;
+assign LED_USER   = ioctl_download | rec_led;
 reg  [127:0] cfg = 0;    // settings latched at reset (below)
 
 
@@ -82,8 +88,10 @@ parameter CONF_STR = {
 	"-;",
 	"F1,BINROM,Cartridge;",
 	"H1F2,CAS,Tape;",
-	"h1-;",
-	"H2S0,DSK,Disk;",
+	"S2,CAS,Tape save;",
+	"-;",
+	"H2S0,DSK,Disk A;",
+	"H2S1,DSK,Disk B;",
 	"h2-;",
 	"F0,ROM,Load ROM;",
 	"-;",
@@ -209,14 +217,18 @@ wire        forced_scandoubler;
 wire [21:0] gamma_bus;
 wire [10:0] PS2Keys;
  
-wire        img_mounted, img_readonly;
+// Virtual disks: 0 = Disk A, 1 = Disk B (SV-801), 2 = Tape save.
+wire  [2:0] img_mounted;
+wire        img_readonly;
 wire [63:0] img_size;
-wire [31:0] sd_lba;
-wire        sd_rd, sd_wr, sd_ack, sd_buff_wr;
+wire [31:0] sd_lba[3];
+wire  [2:0] sd_rd, sd_wr, sd_ack;
+wire        sd_buff_wr;
 wire  [8:0] sd_buff_addr;
-wire  [7:0] sd_buff_dout, sd_buff_din;
+wire  [7:0] sd_buff_dout;
+wire  [7:0] sd_buff_din[3];
 
-hps_io #(.CONF_STR(CONF_STR), .VDNUM(1)) hps_io
+hps_io #(.CONF_STR(CONF_STR), .VDNUM(3)) hps_io
 (
 	.clk_sys(clk_sys),
 	.HPS_BUS(HPS_BUS),
@@ -238,14 +250,14 @@ hps_io #(.CONF_STR(CONF_STR), .VDNUM(1)) hps_io
 	.img_mounted(img_mounted),
 	.img_readonly(img_readonly),
 	.img_size(img_size),
-	.sd_lba('{sd_lba}),
-	.sd_blk_cnt('{6'd0}),
+	.sd_lba(sd_lba),
+	.sd_blk_cnt('{6'd0, 6'd0, 6'd0}),
 	.sd_rd(sd_rd),
 	.sd_wr(sd_wr),
 	.sd_ack(sd_ack),
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_dout(sd_buff_dout),
-	.sd_buff_din('{sd_buff_din}),
+	.sd_buff_din(sd_buff_din),
 	.sd_buff_wr(sd_buff_wr),
 	.info_req(info_req),
 	.info(8'd1),
@@ -379,7 +391,7 @@ spram #(18) ram
 (
 	.clock(clk_sys),
 	.address((ioctl_download && ioctl_isROM) ? {ioctl_index[0],ioctl_addr[15:0]} : ram_a),
-	.wren((ioctl_wr && ioctl_isROM) | (isRam & ~m806_ramdis & ~(ram_we_n | ram_ce_n))),
+	.wren((ioctl_wr && ioctl_isROM && ~|ioctl_addr[24:16]) | (isRam & ~m806_ramdis & ~(ram_we_n | ram_ce_n))),
 	.data((ioctl_wr && ioctl_isROM) ? ioctl_dout : ram_do),
 	.q(ram_di)
 );
@@ -387,6 +399,7 @@ spram #(18) ram
 
 wire [17:0] ram_a;
 wire isRam, open_bus;
+wire isCart = ram_a[17:16] == 2'b01;   // the cartridge bank (11 / 12)
 
 // Cartridge: loaded through index 1 at 10000-1FFFF; cart_last is the offset of
 // its last byte, so the rest of the 64 KB cartridge space reads FF.
@@ -395,7 +408,7 @@ reg [15:0] cart_last;
 always @(posedge clk_sys) begin
 	if (ioctl_wr && ioctl_download && ioctl_index[5:0] == 6'd1) begin
 		cart_loaded <= 1'b1;
-		cart_last   <= ioctl_addr[15:0];
+		cart_last   <= |ioctl_addr[24:16] ? 16'hFFFF : ioctl_addr[15:0];
 	end
 	if (cart_eject) cart_loaded <= 1'b0;
 end
@@ -452,9 +465,10 @@ cv_console console
 	.svi_col_i(svi_col),	
 	
 	.svi_tap_i(svi_audio_in),
-	.tape_ready_n_i(~(tape_loaded | status[15])),//status[15] ? tape_in : (CAS_status != 0 ? CAS_dout : 1'b0)),
+	.tape_ready_n_i(~(tape_loaded | status[15] | rec_active)),//status[15] ? tape_in : (CAS_status != 0 ? CAS_dout : 1'b0)),
 
 	.motor_o(motor),
+	.cas_out_o(cas_out),
 
 	.joy0_i(~{joya[4],joya[0],joya[1],joya[2],joya[3]}), //SVI {Fire,Right, Left, Down, Up} // HPS {Fire,Up, Down, Left, Right}
 	.joy1_i(~{joyb[4],joyb[0],joyb[1],joyb[2],joyb[3]}),
@@ -463,7 +477,7 @@ cv_console console
 	.cpu_ram_we_n_o(ram_we_n),
 	.cpu_ram_ce_n_o(ram_ce_n),
 	.cpu_ram_rd_n_o(ram_rd_n),
-	.cpu_ram_d_i(open_bus ? 8'hFF : ram_di),
+	.cpu_ram_d_i(open_bus ? 8'hFF : (mega_on & isCart) ? mega_q : ram_di),
 	.cpu_ram_d_o(ram_do),
 
 	.ay_port_b(ay_port_b),
@@ -635,16 +649,18 @@ sv801 sv801
 	.dout(fdc_dout),
 	.dout_en(fdc_dout_en),
 
-	.img_mounted(img_mounted),
+	.img_mounted(img_mounted[1:0]),
 	.img_readonly(img_readonly),
 	.img_size(img_size),
-	.sd_lba(sd_lba),
-	.sd_rd(sd_rd),
-	.sd_wr(sd_wr),
-	.sd_ack(sd_ack),
+	.sd_lba0(sd_lba[0]),
+	.sd_lba1(sd_lba[1]),
+	.sd_rd(sd_rd[1:0]),
+	.sd_wr(sd_wr[1:0]),
+	.sd_ack(sd_ack[1:0]),
 	.sd_buff_addr(sd_buff_addr),
 	.sd_buff_dout(sd_buff_dout),
-	.sd_buff_din(sd_buff_din),
+	.sd_buff_din0(sd_buff_din[0]),
+	.sd_buff_din1(sd_buff_din[1]),
 	.sd_buff_wr(sd_buff_wr),
 
 	.led(fdc_led)
@@ -718,6 +734,11 @@ end
 // block RAM buffer wrapped bigger tapes). Written by the CAS download
 // (ioctl_wait holds Main while the SDRAM is busy), read by the player.
 assign SDRAM_CLK = ~clk_sys;
+// The cartridge is copied there too, at 1000000h, for the megaROM pages.
+wire        sdr_rd;
+wire [24:0] sdr_addr;
+wire  [7:0] sdr_dout;
+wire        sdram_dl = ioctl_download && (ioctl_isCAS || ioctl_isCART);
 sdram sdram
 (
 	.*,
@@ -725,13 +746,84 @@ sdram sdram
 	.clk(clk_sys),
 
 	.wtbt(0),
-	.addr((ioctl_download && ioctl_isCAS) ? ioctl_addr : CAS_addr),
-	.rd(CAS_rd),
-	.dout(CAS_di),
+	.addr(sdram_dl ? (ioctl_isCART ? {1'b1, 4'd0, ioctl_addr[19:0]} : ioctl_addr) : sdr_addr),
+	.rd(sdr_rd),
+	.dout(sdr_dout),
 	.din(ioctl_dout),
-	.we(ioctl_wr && ioctl_isCAS),
+	.we(ioctl_wr && (ioctl_isCAS || (ioctl_isCART && ~|ioctl_addr[24:20]))),
 	.ready(sdram_rdy)
 );
+
+wire        cas_rdy;
+wire        mega_req, mega_ack;
+wire [24:0] mega_addr;
+wire  [7:0] mega_data;
+svi_sdram_arb sdram_arb
+(
+	.clk(clk_sys),
+	.hold(sdram_dl),
+	.cas_rd(CAS_rd),
+	.cas_addr(CAS_addr),
+	.cas_data(CAS_di),
+	.cas_ready(cas_rdy),
+	.mr_req(mega_req),
+	.mr_addr(mega_addr),
+	.mr_ack(mega_ack),
+	.mr_data(mega_data),
+	.rd(sdr_rd),
+	.addr(sdr_addr),
+	.dout(sdr_dout),
+	.ready(sdram_rdy)
+);
+
+/////////////////  MegaROM (cartridges over 64 KB)  /////////////////////////
+
+svi_megarom megarom
+(
+	.clk(clk_sys),
+	.ce_5m37(ce_5m37),
+	.dl(ioctl_download && ioctl_isCART),
+	.dl_wr(ioctl_wr && ioctl_download && ioctl_isCART),
+	.dl_addr(ioctl_addr),
+	.dl_data(ioctl_dout),
+	.eject(cart_eject),
+	.active(mega_on),
+	.rd_req(mega_req),
+	.rd_addr(mega_addr),
+	.rd_ack(mega_ack),
+	.rd_data(mega_data),
+	.cpu_a(ram_a[13:0]),
+	.cpu_q(mega_q)
+);
+
+/////////////////  Tape save (CSAVE to a CAS file)  /////////////////////////
+
+tape_rec tape_rec
+(
+	.clk(clk_sys),
+	.ce_cpu(ce_cpu_p),
+	.cas_out(cas_out),
+	.motor_on(~motor),
+
+	.img_mounted(img_mounted[2]),
+	.img_readonly(img_readonly),
+	.img_size(img_size),
+	.sd_lba(sd_lba[2]),
+	.sd_rd(sd_rd[2]),
+	.sd_wr(sd_wr[2]),
+	.sd_ack(sd_ack[2]),
+	.sd_buff_addr(sd_buff_addr),
+	.sd_buff_din(sd_buff_din[2]),
+
+	.active(rec_active),
+	.recording(rec_busy),
+	.full(rec_full),
+	.length()
+);
+// User LED: on while a block is being recorded, blinking when the file is full.
+reg [23:0] blink = 0;
+always @(posedge clk_sys) blink <= blink + 1'd1;
+assign rec_led = rec_active & (rec_full ? blink[23] : rec_busy);
 
 
 assign play = ~motor;
@@ -753,7 +845,7 @@ cassette CASReader(
   .sdram_addr(CAS_addr),
   .sdram_data(CAS_di),
   .sdram_rd(CAS_rd),
-  .sdram_ready(sdram_rdy),
+  .sdram_ready(cas_rdy),
   .pos(CAS_pos),
 
   .data(CAS_dout),

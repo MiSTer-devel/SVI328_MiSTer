@@ -44,3 +44,6 @@ set_global_assignment -name SYSTEMVERILOG_FILE rtl/sv806/sv806_auto.sv
 set_global_assignment -name VERILOG_FILE rtl/sv806/um6845r.v
 
 set_global_assignment -name SYSTEMVERILOG_FILE Svi328.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/tape_rec.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/svi_megarom.sv
+set_global_assignment -name SYSTEMVERILOG_FILE rtl/svi_sdram_arb.sv

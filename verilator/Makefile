@@ -13,7 +13,7 @@ V_SRC = sim.vlt svi_sim.sv \
 	$(SV)/vdp18v/vdp18_ctrl.sv $(SV)/vdp18v/vdp18_hor_vert.sv $(SV)/vdp18v/vdp18_pattern.sv \
 	$(SV)/vdp18v/vdp18_sprite.sv \
 	$(RTL)/t80sv/t80sv_all.sv \
-	$(RTL)/svi_mapper.v $(RTL)/cassette.v gen/square_gen.v $(RTL)/jt8255.v $(RTL)/tape_overlay.sv \
+	$(RTL)/svi_mapper.v $(RTL)/cassette.v $(RTL)/tape_rec.sv $(RTL)/svi_megarom.sv $(RTL)/svi_sdram_arb.sv gen/square_gen.v $(RTL)/jt8255.v $(RTL)/tape_overlay.sv \
 	$(RTL)/sv801/sv801.sv $(RTL)/sv801/wd1793.sv $(RTL)/sv806/sv806.sv $(RTL)/sv806/sv806_auto.sv $(RTL)/sv806/um6845r.v \
 	$(RTL)/Jt49/jt49_bus.v $(RTL)/Jt49/jt49.v $(RTL)/Jt49/jt49_cen.v $(RTL)/Jt49/jt49_div.v \
 	$(RTL)/Jt49/jt49_eg.v $(RTL)/Jt49/jt49_exp.v $(RTL)/Jt49/jt49_noise.v

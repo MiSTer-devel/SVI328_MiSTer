@@ -83,6 +83,7 @@ entity cv_console is
     svi_tap_i	    : in  std_logic;	 
     tape_ready_n_i  : in  std_logic;   -- PPI A6: 0 = a tape is in the deck
     motor_o	    : out std_logic;	 
+    cas_out_o       : out std_logic;   -- PPI C5: tape write data
 	 
     por_n_o         : out std_logic;
     -- Controller Interface ---------------------------------------------------
@@ -288,6 +289,7 @@ begin
   vdd_s <= '1';
   audio_o <=  (keyBeep & ((PortC_8255(6) and svi_tap_i) or PortC_8255(5)) & "000000000") or AySound & "0";
   motor_o <= motor;
+  cas_out_o <= PortC_8255(5);
 
 
   -----------------------------------------------------------------------------

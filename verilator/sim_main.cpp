@@ -34,7 +34,8 @@ static uint64_t cycles = 0;
 
 // ---------------------------------------------------------------- options
 static std::string rom_path = "../software/mister11/boot.rom";
-static std::string cart_path, tape_path, outdir = "out", wav_path, disk_path, charrom_path;
+static std::string cart_path, tape_path, outdir = "out", wav_path, disk_path, charrom_path, disk2_path, rec_path;
+static size_t rec_size = 65536;
 static bool fdc_on = false, m806_on = false;
 static int display = 0;   // OSD Display: 0 Auto, 1 80-column, 2 VDP
 static int run_frames = 0, every = 0;
@@ -172,24 +173,30 @@ static void tick() {
   cycles++;
 }
 
-// ---------------------------------------------------------------- SD card (hps_io) for the SV-801
-// One image in memory; writes stay in memory (the file is never changed).
-static std::vector<uint8_t> disk_img;
-static int sd_state = 0, sd_cnt = 0, sd_addr = 0;
+// ---------------------------------------------------------------- SD card (hps_io)
+// VD 0 / 1: the SV-801's drives A: / B:, VD 2: Tape save. Images in memory;
+// disk writes stay in memory, the Tape save image is written out at the end.
+static std::vector<uint8_t> vd_img[3];
+static int sd_state = 0, sd_cnt = 0, sd_addr = 0, sd_vd = 0;
 static uint32_t sd_lba_r = 0;
 static bool sd_is_wr = false;
-static uint64_t sd_reads = 0, sd_writes = 0;
+static uint64_t sd_reads = 0, sd_writes = 0, rec_writes = 0;
 static void sd_step() {
   top->sd_buff_wr = 0;
   switch (sd_state) {
     case 0:
-      if (top->sd_rd || top->sd_wr) {
-        sd_is_wr = top->sd_wr; sd_lba_r = top->sd_lba; sd_cnt = 40; sd_state = 1;
-        if (sd_is_wr) sd_writes++; else sd_reads++;
+      for (int v = 0; v < 3; v++) {
+        if (((top->sd_rd >> v) & 1) || ((top->sd_wr >> v) & 1)) {
+          sd_vd = v; sd_is_wr = (top->sd_wr >> v) & 1;
+          sd_lba_r = v == 0 ? top->sd_lba0 : v == 1 ? top->sd_lba1 : top->sd_lba2;
+          sd_cnt = 40; sd_state = 1;
+          if (v == 2) rec_writes++; else if (sd_is_wr) sd_writes++; else sd_reads++;
+          break;
+        }
       }
       break;
     case 1:
-      if (--sd_cnt == 0) { top->sd_ack = 1; sd_addr = 0; sd_cnt = 0; sd_state = 2; }
+      if (--sd_cnt == 0) { top->sd_ack = 1 << sd_vd; sd_addr = 0; sd_cnt = 0; sd_state = 2; }
       break;
     case 2: {
       // one byte every 4 clocks, as hps_io paces it
@@ -198,12 +205,14 @@ static void sd_step() {
         break;
       }
       sd_cnt = 0;
+      std::vector<uint8_t>& img = vd_img[sd_vd];
       size_t off = (size_t)sd_lba_r * 512 + sd_addr;
       if (sd_is_wr) {
-        if (off < disk_img.size()) disk_img[off] = top->sd_buff_din;
+        uint8_t b = sd_vd == 0 ? top->sd_buff_din0 : sd_vd == 1 ? top->sd_buff_din1 : top->sd_buff_din2;
+        if (off < img.size()) img[off] = b;
       } else {
         top->sd_buff_addr = sd_addr;
-        top->sd_buff_dout = off < disk_img.size() ? disk_img[off] : 0;
+        top->sd_buff_dout = off < img.size() ? img[off] : 0;
         top->sd_buff_wr = 1;
       }
       if (++sd_addr == 512) { sd_state = 3; sd_cnt = 8; }
@@ -216,6 +225,15 @@ static void sd_step() {
       if (--sd_cnt == 0) sd_state = 0;
       break;
   }
+}
+
+static void mount(int vd, const std::vector<uint8_t>& d) {
+  // hps_io: img_size, then img_mounted held a while (wd1793 samples on its ce)
+  vd_img[vd] = d;
+  top->img_size = d.size(); top->img_mounted = 1 << vd;
+  for (int i = 0; i < 2000; i++) tick();
+  top->img_mounted = 0;
+  for (int i = 0; i < 16; i++) tick();
 }
 
 static void download(int target, uint32_t base, const std::vector<uint8_t>& d) {
@@ -314,6 +332,8 @@ static void usage() {
        "  --ntsc                   OSD Video standard = NTSC (default PAL)\n"
        "  --disk FILE              SV-801 on, FILE (.dsk, 172032 / 346112 bytes) in drive 0\n"
        "  --fdc                    SV-801 on, no disk\n"
+       "  --disk2 FILE             SV-801 on, FILE in drive 1 (B:)\n"
+       "  --rec FILE[:SIZE]        Tape save: a blank SIZE-byte image (default 65536), written to FILE at the end\n"
        "  --80col / --show80       SV-806 on / and show its output (Display = 80-column)\n"
        "  --display auto|80|vdp    OSD Display (default auto: the screen the software writes to)\n"
        "  --charrom FILE           SV-806 character ROM (boot1.rom; implies --80col)\n"
@@ -401,6 +421,9 @@ int main(int argc, char** argv) {
     else if (a == "--318") model_318 = true;
     else if (a == "--mem-std") mem_std = true;
     else if (a == "--disk") { disk_path = next(); fdc_on = true; }
+    else if (a == "--disk2") { disk2_path = next(); fdc_on = true; }
+    else if (a == "--rec") { std::string v = next(); size_t c = v.rfind(':');
+      if (c != std::string::npos) { rec_size = strtoul(v.c_str() + c + 1, 0, 0); v = v.substr(0, c); } rec_path = v; }
     else if (a == "--fdc") fdc_on = true;
     else if (a == "--80col") m806_on = true;
     else if (a == "--show80") { m806_on = true; display = 1; }
@@ -428,7 +451,7 @@ int main(int argc, char** argv) {
 
   // Main loads boot.rom as index 0 and a cartridge as index 1 while reset is held
   download(0, 0x00000, read_file(rom_path));
-  if (!cart_path.empty()) download(0, 0x10000, read_file(cart_path));
+  if (!cart_path.empty()) download(3, 0, read_file(cart_path));   // ioctl index 1
   if (!charrom_path.empty()) download(2, 0, read_file(charrom_path));   // boot1.rom
   if (!tape_path.empty()) {
     cas_img = read_file(tape_path);
@@ -441,14 +464,9 @@ int main(int argc, char** argv) {
   top->tape_rewind = 1; for (int i = 0; i < 8; i++) tick(); top->tape_rewind = 0;
   for (int i = 0; i < 64; i++) tick();
   top->reset = 0;
-  if (!disk_path.empty()) {
-    // hps_io: img_mounted with img_size, held a while (wd1793 samples on its ce)
-    disk_img = read_file(disk_path);
-    top->img_size = disk_img.size(); top->img_mounted = 1;
-    for (int i = 0; i < 2000; i++) tick();
-    top->img_mounted = 0;
-    printf("disk: %zu bytes\n", disk_img.size());
-  }
+  if (!disk_path.empty()) { mount(0, read_file(disk_path)); printf("disk A: %zu bytes\n", vd_img[0].size()); }
+  if (!disk2_path.empty()) { mount(1, read_file(disk2_path)); printf("disk B: %zu bytes\n", vd_img[1].size()); }
+  if (!rec_path.empty()) { mount(2, std::vector<uint8_t>(rec_size, 0)); printf("tape save: %zu-byte blank image\n", rec_size); }
   if (!wav_path.empty()) wav_open();
 
   size_t si = 0;
@@ -461,7 +479,7 @@ int main(int argc, char** argv) {
   while (frame < run_frames) {
     // scripted input for this frame (applied once per frame at its start)
     tick();
-    if (fdc_on) sd_step();
+    if (fdc_on || !rec_path.empty()) sd_step();
 
     // PS/2 queue: one event every 2000 cycles
     if (!ps2q.empty() && cycles >= ps2_next) {
@@ -588,6 +606,19 @@ int main(int argc, char** argv) {
   }
   printf("done: %d frames, %llu cycles, last frame %dx%d, CAS_addr=%06X\n", frame,
          (unsigned long long)cycles, last_w, last_h, (unsigned)top->cas_addr);
+  if (fdc_on) printf("sd: %llu reads, %llu writes\n", (unsigned long long)sd_reads, (unsigned long long)sd_writes);
+  if (!rec_path.empty()) {
+    // what tape_rec wrote, cut at the bytes it recorded (the rest is the blank)
+    size_t n = std::min((size_t)top->rec_length, vd_img[2].size());
+    FILE* f = fopen(rec_path.c_str(), "wb");
+    if (f) { fwrite(vd_img[2].data(), 1, n, f); fclose(f); }
+    printf("tape save: %zu bytes recorded, %llu sector writes%s -> %s\n", n,
+           (unsigned long long)rec_writes, top->rec_full ? " (FULL)" : "", rec_path.c_str());
+  }
+  if (!disk2_path.empty() && getenv("DISK2_OUT")) {
+    FILE* f = fopen(getenv("DISK2_OUT"), "wb"); fwrite(vd_img[1].data(), 1, vd_img[1].size(), f); fclose(f);
+  }
+  if (top->mega_on) printf("megaROM active\n");
   wav_close();
   delete top;
   return 0;

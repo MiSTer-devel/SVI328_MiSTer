@@ -71,6 +71,13 @@ those.
 
 ## Options worth knowing
 
+- `--disk2 FILE` puts a disk in drive B:. `--rec FILE[:SIZE]` mounts a blank
+  SIZE-byte image in Tape save (rtl/tape_rec.sv) and writes what was recorded
+  to FILE at the end: `--rec /tmp/t.cas --type 'CSAVE"A"\n@900'`, then play
+  it back with `--tape /tmp/t.cas`.
+- `--cart` loads through the cartridge path (ioctl index 1): images over
+  64 KB run as megaROMs (rtl/svi_megarom.sv) behind rtl/svi_sdram_arb.sv.
+
 - `--tape-log` prints every motor change with `CAS_addr` and which CAS block
   (16 x 55h + 7Fh) that position is in, and how far into it.
 - `--until 'TEXT'` stops when the text appears in the VDP name table (checked
